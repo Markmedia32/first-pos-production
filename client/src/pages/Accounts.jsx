@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { ChevronDown, ChevronUp, History } from 'lucide-react';
 
+const API = import.meta.env.VITE_API_BASE_URL;
+
 const Accounts = () => {
     const [customers, setCustomers] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
@@ -34,7 +36,7 @@ const Accounts = () => {
 
             for (const customer of customersToSettle) {
                 try {
-                    await axios.put('http://localhost:5000/api/customers/topup', {
+                    await axios.put(`${API_BASE_URL}/api/customers/topup`, {
     customer_id: selectedCustomer.customer_id,
     amount: parseFloat(topUpAmount), // Ensure it's a float
     clientName: selectedCustomer.full_name,
@@ -54,7 +56,7 @@ const Accounts = () => {
 
     const fetchCustomers = async () => {
         try {
-            const res = await axios.get('http://localhost:5000/api/customers');
+            const res = await axios.get(`${API}/api/customers`);
             // Adding a local orders array to each customer object
             const customersWithOrders = res.data.map(c => ({ ...c, orders: [] }));
             setCustomers(customersWithOrders);
@@ -70,7 +72,7 @@ const Accounts = () => {
         }
         
         try {
-            const res = await axios.get(`http://localhost:5000/api/reports/customer-orders/${customerId}`);
+            const res = await axios.get(`${API}/api/reports/customer-orders/${customerId}`);
             setCustomers(prev => prev.map(c => 
                 c.customer_id === customerId ? { ...c, orders: res.data } : c
             ));
@@ -83,7 +85,7 @@ const Accounts = () => {
     const handleCreateCustomer = async (e) => {
         e.preventDefault();
         try {
-            await axios.post('http://localhost:5000/api/customers/create', newCustomer);
+            await axios.post(`${API}/api/customers/create`, newCustomer);
             setShowModal(false);
             setNewCustomer({ full_name: '', customer_type: 'Regular', phone_number: '' });
             fetchCustomers();
@@ -97,7 +99,7 @@ const Accounts = () => {
     const amount = parseFloat(topUpAmount);
     
     try {
-        await axios.put('http://localhost:5000/api/customers/topup', {
+        await axios.put(`${API}/api/customers/topup`, {
             customer_id: selectedCustomer.customer_id,
             amount: amount,
             clientName: selectedCustomer.full_name,

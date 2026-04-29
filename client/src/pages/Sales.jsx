@@ -6,6 +6,8 @@ import {
   MinusCircle, Plus, PieChart, CreditCard 
 } from 'lucide-react';
 
+const API = import.meta.env.VITE_API_URL;
+
 const Sales = () => {
   const [reportData, setReportData] = useState([]);
   const [paymentMethods, setPaymentMethods] = useState({
@@ -35,7 +37,7 @@ const [rangeData, setRangeData] = useState(null);
     const fetchFinancialData = async () => {
       setLoading(true);
       try {
-        const dailyRes = await axios.get(`http://localhost:5000/api/reports/sales-summary?date=${selectedDate}`);
+        const dailyRes = await axios.get(`${API}/api/reports/sales-summary?date=${selectedDate}`);
         
         if (dailyRes.data.itemized) {
             setReportData(dailyRes.data.itemized || []);
@@ -48,10 +50,10 @@ const [rangeData, setRangeData] = useState(null);
         }
 
         const monthYear = selectedDate.substring(0, 7); 
-        const monthRes = await axios.get(`http://localhost:5000/api/reports/monthly-cumulative?month=${monthYear}`);
+        const monthRes = await axios.get(`${API}/api/reports/monthly-cumulative?month=${monthYear}`);
         setMonthlyTotal(Number(monthRes.data?.total_revenue) || 0);
 
-        const creditRes = await axios.get(`http://localhost:5000/api/customers/total-credit`);
+        const creditRes = await axios.get(`${API}/api/customers/total-credit`);
         setTotalCustomerCredit(Number(creditRes.data?.total_credit) || 0);
 
       } catch (err) {
@@ -127,8 +129,8 @@ const [rangeData, setRangeData] = useState(null);
 
   try {
     const res = await axios.get(
-      `http://localhost:5000/api/reports/date-range?from=${fromDate}&to=${toDate}`
-    );
+  `${API}/api/reports/date-range?from=${fromDate}&to=${toDate}`
+);
 
     const data = res.data;
     setRangeData(data);
@@ -452,7 +454,7 @@ const [rangeData, setRangeData] = useState(null);
       <h2>Ksh {rangeData.totalRevenue.toLocaleString()}</h2>
 
     </div>
-  )}
+  )} 
 </div>
 
         <div className="report-card" style={{ background: 'white', borderRadius: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', overflow: 'hidden' }}>

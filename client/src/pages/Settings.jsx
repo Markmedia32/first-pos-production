@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Trash2, Key } from 'lucide-react';
 import axios from 'axios';
 
+const API = import.meta.env.VITE_API_URL;
 const Settings = () => {
     const [users, setUsers] = useState([]);
     const [form, setForm] = useState({ username: '', password: '', role_id: 2 });
@@ -22,7 +23,7 @@ const Settings = () => {
 
     const fetchUsers = async () => {
         try {
-            const res = await axios.get('http://localhost:5000/api/admin/users', {
+            const res = await axios.get(`${API}/api/admin/users`, {
                 headers: { 'user-role': currentUser?.role }
             });
             setUsers(res.data);
@@ -32,7 +33,7 @@ const Settings = () => {
     const handleCreate = async (e) => {
         e.preventDefault();
         try {
-            await axios.post('http://localhost:5000/api/admin/create-user', form);
+            await axios.post(`${API}/api/admin/create-user`, form);
             alert("User Created");
             fetchUsers();
         } catch (err) { alert("Error creating user"); }
@@ -41,7 +42,7 @@ const Settings = () => {
     const handleResetPassword = async (id) => {
         const newPass = prompt("Enter new password for this user:");
         if (newPass) {
-            await axios.put('http://localhost:5000/api/admin/reset-password', 
+            await axios.put(`${API}/api/admin/reset-password`,  
                 { userId: id, newPassword: newPass },
                 { headers: { 'user-role': currentUser.role }}
             );
@@ -51,7 +52,7 @@ const Settings = () => {
 
     const handleDelete = async (id, name) => {
         if (window.confirm(`Are you sure you want to delete ${name}?`)) {
-            await axios.delete(`http://localhost:5000/api/admin/delete-user/${id}`, {
+            await axios.delete(`${API}/api/admin/delete-user/${id}`, {
                 headers: { 'user-role': currentUser.role }
             });
             fetchUsers();

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL;
+
 const Login = () => {
   const [credentials, setCredentials] = useState({ username: '', password: '' });
   const [status, setStatus] = useState({ loading: false, error: '' });
@@ -16,7 +18,7 @@ const Login = () => {
     setStatus({ loading: true, error: '' });
 
     try {
-      const { data } = await axios.post('http://localhost:5000/api/login', credentials);
+      const { data } = await axios.post(`${API_BASE_URL}/api/login`, credentials);
       if (data.success) {
         localStorage.setItem('user', JSON.stringify(data.user));
         navigate('/pos');

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Package, Plus, AlertCircle, RefreshCcw, Edit, Save, X, ArrowUp, ArrowDown, BarChart3, Calendar } from 'lucide-react';
 
+const API = import.meta.env.VITE_API_BASE_URL;
+
 const Inventory = () => {
     const [stock, setStock] = useState([]);
     const [auditMessages, setAuditMessages] = useState([]);
@@ -25,8 +27,8 @@ const Inventory = () => {
 
     const loadData = async () => {
         try {
-            const inv = await axios.get('http://localhost:5000/api/inventory');
-            const audit = await axios.get('http://localhost:5000/api/inventory/audit-report');
+            const inv = await axios.get(`${API}/api/inventory`);
+            const audit = await axios.get(`${API}/api/inventory/audit-report`);
             
             // Process the data for smart display logic
             const processedStock = inv.data.map(item => {
@@ -72,7 +74,7 @@ const Inventory = () => {
     const handleAddProduct = async (e) => {
         e.preventDefault();
         try {
-            await axios.post('http://localhost:5000/api/inventory/add-new', newItem);
+            await axios.post(`${API}/api/inventory/add-new`, newItem);
             setShowAddModal(false);
             loadData();
         } catch (err) { alert("Error adding product"); }
@@ -80,7 +82,7 @@ const Inventory = () => {
 
     const handleQuickUpdate = async (id) => {
         try {
-            await axios.post('http://localhost:5000/api/inventory/add-stock', { 
+            await axios.post(`${API}/api/inventory/add-stock`, { 
                 item_id: id, 
                 quantity_to_add: updateAmount.val 
             });
