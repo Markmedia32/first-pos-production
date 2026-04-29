@@ -14,19 +14,44 @@ const Login = () => {
   };
 
   const submitAccess = async (e) => {
-    e.preventDefault();
-    setStatus({ loading: true, error: '' });
+  e.preventDefault();
 
-    try {
-      const { data } = await axios.post(`${API_BASE_URL}/api/login`, credentials);
-      if (data.success) {
-        localStorage.setItem('user', JSON.stringify(data.user));
-        navigate('/pos');
-      }
-    } catch (err) {
+  console.log("🔥 LOGIN ATTEMPT STARTED");
+  console.log("🌐 API BASE URL:", API_BASE_URL);
+  console.log("📡 Full URL:", `${API_BASE_URL}/api/login`);
+  console.log("📦 Credentials:", credentials);
+
+  setStatus({ loading: true, error: '' });
+
+  try {
+    const response = await axios.post(
+      `${API_BASE_URL}/api/login`,
+      credentials
+    );
+
+    console.log("✅ RESPONSE STATUS:", response.status);
+    console.log("✅ RESPONSE DATA:", response.data);
+
+    const { data } = response;
+
+    if (data.success) {
+      console.log("🎉 LOGIN SUCCESS");
+      localStorage.setItem('user', JSON.stringify(data.user));
+      navigate('/pos');
+    } else {
+      console.log("⚠️ LOGIN FAILED - NO SUCCESS FLAG");
       setStatus({ loading: false, error: 'Access Denied: Check Credentials' });
     }
-  };
+
+  } catch (err) {
+    console.log("❌ LOGIN ERROR:");
+    console.log("Message:", err.message);
+    console.log("Response:", err.response?.data);
+    console.log("Status:", err.response?.status);
+
+    setStatus({ loading: false, error: 'Access Denied: Check Credentials' });
+  }
+};
 
   return (
     <div className="login-viewport">
