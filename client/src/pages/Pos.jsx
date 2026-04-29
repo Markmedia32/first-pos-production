@@ -64,7 +64,7 @@ const Pos = () => {
           setActiveOrder({ 
             name: orderData.client, 
             amount: orderData.total, 
-            method: 'M-Pesa', 
+            method: 'Mpesa', 
             items: orderData.items 
           });
           setShowReceipt(true);
@@ -89,67 +89,44 @@ const Pos = () => {
     setSelectedCustomer(null);
   };
 
-  const handlePayment = async (method) => {
-    if (cart.length === 0) return alert("Cart is empty");
-    
-    if (method === 'M-Pesa') return handleMpesaPayment();
+ const handlePayment = async (method) => {
+  if (cart.length === 0) return alert("Cart is empty");
 
-    setLoading(true);
-    const finalClientName = selectedCustomer ? selectedCustomer.full_name : (clientName || "Guest Customer");
+  setLoading(true);
 
-    try {
-      const payload = {
-  amount: method === 'Complimentary' ? 0 : total,
-  clientName: finalClientName,
-  items: cart,
-  paymentMethod: method,
-  customerId: selectedCustomer?.customer_id || null,
-  staffName: selectedCustomer?.full_name || null // ✅ ADD THIS
-};
+  const finalClientName = selectedCustomer 
+    ? selectedCustomer.full_name 
+    : (clientName || "Guest Customer");
 
-      await axios.post('http://localhost:5000/api/pay/unified', payload);
-
-      setActiveOrder({ 
-        name: finalClientName, 
-        amount: method === 'Complimentary' ? 0 : total,
-        method: method, 
-        items: [...cart] 
-      });
-      setShowReceipt(true);
-      resetForm();
-      setLoading(false);
-    } catch (err) {
-      alert(`${method} payment failed. Check if server is running.`);
-      setLoading(false);
-    }
-  };
-
-  const handleMpesaPayment = async () => {
-    if (!phoneNumber.startsWith('254') || phoneNumber.length !== 12) {
-      alert("Please enter a valid format: 2547XXXXXXXX");
-      return;
-    }
-    setLoading(true);
-    const orderSnapshot = {
-        total: total,
-        client: clientName || "Guest Customer",
-        items: [...cart]
+  try {
+    const payload = {
+      amount: method === 'Complimentary' ? 0 : total,
+      clientName: finalClientName,
+      items: cart,
+      // Ensure we send 'Mpesa' so the server report logic picks it up
+      paymentMethod: method, 
+      customerId: selectedCustomer?.customer_id || null,
     };
-    try {
-      const res = await axios.post('http://localhost:5000/api/pay/stk', {
-        amount: total,
-        phone: phoneNumber,
-        clientName: orderSnapshot.client,
-        items: orderSnapshot.items
-      });
-      alert("STK Push Sent!");
-      startPolling(res.data.CheckoutRequestID, orderSnapshot);
-    } catch (err) {
-      alert("M-Pesa service failed.");
-      setLoading(false);
-    }
-  };
 
+    // This calls the same "instant" route as Cash
+    await axios.post('http://localhost:5000/api/pay/unified', payload);
+
+    setActiveOrder({ 
+      name: finalClientName, 
+      amount: method === 'Complimentary' ? 0 : total,
+      method: method,
+      items: [...cart] 
+    });
+
+    setShowReceipt(true);
+    resetForm();
+    setLoading(false);
+
+  } catch (err) {
+    alert(`${method} payment failed. Check server.`);
+    setLoading(false);
+  }
+};
   const filteredMenu = menuItems.filter(item => 
     item.product_name.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -237,9 +214,13 @@ const Pos = () => {
           </div>
 
           <div className="action-buttons-grid">
-            <button className="pay-btn mpesa" onClick={() => handlePayment('M-Pesa')} disabled={loading}>
-              <Smartphone size={16}/> M-PESA
-            </button>
+            <button 
+  className="pay-btn mpesa" 
+  onClick={() => handlePayment('Mpesa')} 
+  disabled={loading}
+>
+  <Smartphone size={16}/> PAYMENT VIA M-PESA
+</button>
             <button className="pay-btn cash" onClick={() => handlePayment('Cash')} disabled={loading}>
               <Banknote size={16}/> CASH
             </button>

@@ -34,10 +34,12 @@ const Accounts = () => {
 
             for (const customer of customersToSettle) {
                 try {
-                    await axios.put('http://localhost:5000/api/customers/reconcile', {
-                        customer_id: customer.customer_id,
-                        autoSettle: true
-                    });
+                    await axios.put('http://localhost:5000/api/customers/topup', {
+    customer_id: selectedCustomer.customer_id,
+    amount: parseFloat(topUpAmount), // Ensure it's a float
+    clientName: selectedCustomer.full_name,
+    payment_method: 'Topup' 
+});
                     fetchCustomers();
                 } catch (err) {
                     console.error("Auto-settle failed for " + customer.full_name, err);

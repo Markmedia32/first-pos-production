@@ -1,13 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { Banknote, Smartphone, Wallet, Gift } from 'lucide-react';
 import { 
-  BarChart3, Calendar, Download, Wallet, Receipt, 
-  MinusCircle, Plus, PieChart, CreditCard, Banknote, Smartphone 
+  BarChart3, Calendar, Download, Receipt, 
+  MinusCircle, Plus, PieChart, CreditCard 
 } from 'lucide-react';
 
 const Sales = () => {
   const [reportData, setReportData] = useState([]);
-  const [paymentMethods, setPaymentMethods] = useState({ Cash: 0, MPesa: 0, Credit: 0, Advance: 0 });
+  const [paymentMethods, setPaymentMethods] = useState({
+  Cash: 0,
+  MPesa: 0,
+  Wallet: 0,
+  Complimentary: 0
+});
+const [fromDate, setFromDate] = useState('');
+const [toDate, setToDate] = useState('');
+const [rangeData, setRangeData] = useState(null);
   const [monthlyTotal, setMonthlyTotal] = useState(0);
   const [totalCustomerCredit, setTotalCustomerCredit] = useState(0);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -16,6 +25,11 @@ const Sales = () => {
   const [expenses, setExpenses] = useState([]);
   const [expenseName, setExpenseName] = useState('');
   const [expenseAmount, setExpenseAmount] = useState('');
+  const totalSales =
+  (paymentMethods.Cash || 0) +
+  (paymentMethods.MPesa || 0) +
+  (paymentMethods.Wallet || 0) +
+  (paymentMethods.Complimentary || 0);
 
   useEffect(() => {
     const fetchFinancialData = async () => {
@@ -25,7 +39,12 @@ const Sales = () => {
         
         if (dailyRes.data.itemized) {
             setReportData(dailyRes.data.itemized || []);
-            setPaymentMethods(dailyRes.data.payments || { Cash: 0, MPesa: 0, Credit: 0, Advance: 0 });
+            setPaymentMethods(dailyRes.data.payments || {
+  Cash: 0,
+  MPesa: 0,
+  Wallet: 0,
+  Complimentary: 0
+});
         }
 
         const monthYear = selectedDate.substring(0, 7); 
@@ -48,12 +67,7 @@ const Sales = () => {
   // --- CALCULATIONS ---
   const totalExpenses = expenses.reduce((acc, exp) => acc + (parseFloat(exp.amount) || 0), 0);
   
-  const actualCashInflow = reportData
-    .filter(item => 
-      (item.payment_method === 'Cash' || item.payment_method === 'MPesa' || item.payment_method === 'Topup') && 
-      item.payment_status === 'Completed'
-    )
-    .reduce((acc, item) => acc + (parseFloat(item.total_revenue) || 0), 0);
+  const actualCashInflow = (paymentMethods.Cash || 0) + (paymentMethods.MPesa || 0);
 
   const netCashAtHand = actualCashInflow - totalExpenses;
   const dailyRevenue = actualCashInflow;
@@ -107,6 +121,182 @@ const Sales = () => {
   const removeExpense = (id) => {
     setExpenses(expenses.filter(exp => exp.id !== id));
   };
+
+  const fetchDateRangeReport = async () => {
+  if (!fromDate || !toDate) return alert("Select both dates");
+
+  try {
+    const res = await axios.get(
+      `http://localhost:5000/api/reports/date-range?from=${fromDate}&to=${toDate}`
+    );
+
+    const data = res.data;
+    setRangeData(data);
+
+    const printWindow = window.open('', '_blank');
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Financial Report</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              padding: 30px;
+              background: white;
+              color: #111;
+            }
+
+            .header {
+              text-align: center;
+              border-bottom: 2px solid #000;
+              padding-bottom: 10px;
+              margin-bottom: 20px;
+            }
+
+            .header h1 {
+              margin: 0;
+              font-size: 22px;
+              letter-spacing: 1px;
+            }
+
+            .header p {
+              margin: 5px 0;
+              font-size: 13px;
+              color: #555;
+            }
+
+            .summary {
+              display: grid;
+              grid-template-columns: repeat(4, 1fr);
+              gap: 10px;
+              margin: 20px 0;
+              text-align: center;
+            }
+
+            .card {
+              border: 1px solid #ddd;
+              padding: 10px;
+              border-radius: 8px;
+            }
+
+            .card h3 {
+              margin: 0;
+              font-size: 14px;
+              color: #666;
+            }
+
+            .card p {
+              margin: 5px 0 0;
+              font-size: 16px;
+              font-weight: bold;
+            }
+
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 20px;
+            }
+
+            th, td {
+              border: 1px solid #ddd;
+              padding: 8px;
+              font-size: 12px;
+            }
+
+            th {
+              background: #f5f5f5;
+            }
+
+            .total {
+              margin-top: 20px;
+              text-align: right;
+              font-size: 16px;
+              font-weight: bold;
+            }
+
+            .footer {
+              margin-top: 40px;
+              text-align: center;
+              font-size: 11px;
+              color: #777;
+            }
+          </style>
+        </head>
+
+        <body>
+
+          <div class="header">
+            <h1>FIRST CLASS WORLD LOGISTICS</h1>
+            <p>Financial Report</p>
+            <p>From: ${fromDate} To: ${toDate}</p>
+          </div>
+
+          <div class="summary">
+            <div class="card">
+              <h3>Cash</h3>
+              <p>Ksh ${data.payments.Cash.toLocaleString()}</p>
+            </div>
+
+            <div class="card">
+              <h3>M-Pesa</h3>
+              <p>Ksh ${data.payments.MPesa.toLocaleString()}</p>
+            </div>
+
+            <div class="card">
+              <h3>Wallet</h3>
+              <p>Ksh ${data.payments.Wallet.toLocaleString()}</p>
+            </div>
+
+            <div class="card">
+              <h3>Complimentary</h3>
+              <p>Ksh ${data.payments.Complimentary.toLocaleString()}</p>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Qty</th>
+                <th>Price</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.itemized.map(item => `
+                <tr>
+                  <td>${item.product_name}</td>
+                  <td>${item.total_qty}</td>
+                  <td>${item.price}</td>
+                  <td>${item.total_revenue}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div class="total">
+            Total Revenue: Ksh ${data.totalRevenue.toLocaleString()}
+          </div>
+
+          <div class="footer">
+            Generated by First Class POS System • CODEY CRAFT AFRICA
+          </div>
+
+          <script>
+            window.print();
+          </script>
+
+        </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+
+  } catch (err) {
+    console.error("Date Range Error:", err);
+  }
+};
 
   return (
     <div className="sales-report-page">
@@ -196,11 +386,74 @@ const Sales = () => {
         </div>
 
         <div className="report-card" style={{ display: 'flex', gap: '30px', marginBottom: '30px', padding: '15px 30px', background: '#fafafa', borderRadius: '15px', border: '1px solid #eee' }}>
-             <span style={{ fontSize: '0.8rem', color: '#666', fontWeight: '800' }}>DAILY COLLECTION:</span>
-             <span style={{ fontSize: '0.85rem' }}><Banknote size={14} style={{ marginBottom: '-2px', marginRight: '5px' }}/> Cash: <b>{paymentMethods.Cash?.toLocaleString()}</b></span>
-             <span style={{ fontSize: '0.85rem' }}><Smartphone size={14} style={{ marginBottom: '-2px', marginRight: '5px' }}/> M-Pesa: <b>{paymentMethods.MPesa?.toLocaleString()}</b></span>
-             <span style={{ fontSize: '0.85rem', color: '#dc3545' }}><Wallet size={14} style={{ marginBottom: '-2px', marginRight: '5px' }}/> Wallet Usage: <b>{paymentMethods.Advance?.toLocaleString()}</b></span>
-        </div>
+  <span>DAILY COLLECTION:</span>
+
+<span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}>
+  <BarChart3 size={16} />
+  Total Sales: Ksh {totalSales.toLocaleString()}
+</span>
+
+  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+  <Banknote size={16} /> 
+  Cash: <b>{paymentMethods.Cash?.toLocaleString()}</b>
+</span>
+
+<span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+  <Smartphone size={16} /> 
+  M-Pesa: <b>{paymentMethods.MPesa?.toLocaleString()}</b>
+</span>
+
+<span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+  <Wallet size={16} /> 
+  Wallet: <b>{paymentMethods.Wallet?.toLocaleString()}</b>
+</span>
+
+<span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#7e22ce' }}>
+  <Gift size={16} /> 
+  Complimentary: <b>{paymentMethods.Complimentary?.toLocaleString()}</b>
+</span>
+
+</div>
+
+<div className="report-card range-card">
+  <h3>📊 Custom Report (Date Range)</h3>
+
+  <div className="range-controls">
+    <input 
+      type="date" 
+      value={fromDate} 
+      onChange={(e) => setFromDate(e.target.value)} 
+    />
+
+    <input 
+      type="date" 
+      value={toDate} 
+      onChange={(e) => setToDate(e.target.value)} 
+    />
+
+    <button onClick={fetchDateRangeReport}>
+      Generate Report
+    </button>
+  </div>
+
+  {rangeData && (
+    <div className="range-results">
+      
+      <div className="range-summary">
+        <p>Cash: <b>Ksh {rangeData.payments.Cash}</b></p>
+        <p>MPesa: <b>Ksh {rangeData.payments.MPesa}</b></p>
+        <p>Wallet Used: <b>Ksh {rangeData.payments.Wallet}</b></p>
+        <p style={{color:'#7e22ce'}}>
+          Complimentary: <b>Ksh {rangeData.payments.Complimentary}</b>
+        </p>
+      </div>
+
+      <h4>Total Revenue (Cash + MPesa)</h4>
+      <h2>Ksh {rangeData.totalRevenue.toLocaleString()}</h2>
+
+    </div>
+  )}
+</div>
 
         <div className="report-card" style={{ background: 'white', borderRadius: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
           <table className="modern-table" style={{ width: '100%', borderCollapse: 'collapse' }}>

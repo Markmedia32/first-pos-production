@@ -1,5 +1,5 @@
 const express = require('express');
-const db = require("./db");
+const mysql = require('mysql2');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const axios = require('axios');
@@ -13,6 +13,17 @@ app.use(cors());
 app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Database Connection
+const db = mysql.createPool({
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'first_class_logistics',
+    port: process.env.DB_PORT || 3306,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
 
 // Test Database Connection
 db.getConnection((err, connection) => {
@@ -50,6 +61,55 @@ const generateToken = async (req, res, next) => {
     }
 };
 
+const deductStockWithYield = (items, reason = 'Sale') => {
+
+    items.forEach(item => {
+
+        const sql = `
+            SELECT y.material_name, y.yield_per_unit
+            FROM yield_rules y
+            WHERE y.menu_item_name = ?
+        `;
+
+        db.query(sql, [item.product_name], (err, results) => {
+
+            if (err) {
+                console.error("Yield lookup error:", err);
+                return;
+            }
+
+            if (results.length === 0) {
+                // fallback: no yield rule → assume 1:1
+                db.query(
+                    "UPDATE inventory SET stock_quantity = stock_quantity - ? WHERE item_name = ?",
+                    [item.qty, item.product_name]
+                );
+
+                return;
+            }
+
+            results.forEach(rule => {
+
+                const material = rule.material_name;
+                const yieldPerUnit = parseFloat(rule.yield_per_unit);
+
+                // actual deduction logic
+                const materialQtyUsed = item.qty / yieldPerUnit;
+
+                db.query(
+                    "UPDATE inventory SET stock_quantity = stock_quantity - ? WHERE item_name = ?",
+                    [materialQtyUsed, material]
+                );
+
+                db.query(`
+                    INSERT INTO inventory_logs (item_name, qty, reason, created_at)
+                    VALUES (?, ?, ?, NOW())
+                `, [material, materialQtyUsed, reason]);
+            });
+        });
+    });
+};
+
 const updateStockLevels = (items, reason = 'Sale') => {
     items.forEach(item => {
         db.query(
@@ -62,6 +122,16 @@ const updateStockLevels = (items, reason = 'Sale') => {
             VALUES (?, ?, ?, NOW())
         `, [item.product_name, item.qty, reason]);
     });
+};
+
+const safeDeductStock = (items, reason = 'Sale') => {
+    if (!items || items.length === 0) return;
+
+    try {
+        deductStockWithYield(items, reason);
+    } catch (err) {
+        console.error("Stock deduction failed:", err);
+    }
 };
 
 // --- ROUTES ---
@@ -192,7 +262,7 @@ app.put('/api/customers/topup', (req, res) => {
                 // This ensures it doesn't get confused with a 'Food Sale'
                 db.query(`
                     INSERT INTO sales (client_name, total_price, payment_status, payment_method, sale_date)
-                    VALUES (?, ?, 'Completed', 'Topup', NOW())
+                    VALUES (?, ?, 'Completed', 'Wallet', NOW())
                 `, [`Deposit: ${clientName}`, topupAmount], (err3) => {
                     res.json({ success: true });
                 });
@@ -324,6 +394,7 @@ app.post('/api/pay/cash', (req, res) => {
     const { clientName, amount, items } = req.body;
 
     const sql = "INSERT INTO sales (client_name, total_price, payment_status, sale_date) VALUES (?, ?, 'Completed', NOW())";
+    deductStockWithYield(items, 'Cash Sale');
 
     db.query(sql, [clientName, amount], (err, result) => {
         if (err) {
@@ -354,23 +425,30 @@ app.post('/api/pay/cash', (req, res) => {
 });
 
 // --- UNIFIED POS PAYMENT (Cash, Credit, Advance, Comp) ---
+// --- UNIFIED POS PAYMENT (Cash, Credit, Advance, Comp, Mpesa) ---
 app.post('/api/pay/unified', (req, res) => {
     const { clientName, amount, items, paymentMethod, customerId } = req.body;
-
+    
+    let method = paymentMethod;
     let finalPrice = amount;
-    let paymentStatus = 'Completed';
+    let paymentStatus = 'Completed'; 
 
-    // If staff/complimentary, price is 0 for accounts, but items must be logged for inventory
-    if (paymentMethod === 'Complimentary') {
+    // ✅ STRENGTHENED NORMALIZATION
+    // This ensures that no matter what the frontend sends, the DB gets 'Mpesa'
+    if (method.toLowerCase().includes('mpesa') || method.toLowerCase().includes('m-pesa')) {
+        method = 'Mpesa';
+    }
+
+    if (method === 'Complimentary') {
         finalPrice = 0;
-    } else if (paymentMethod === 'Credit') {
+    } else if (method === 'Credit') {
         paymentStatus = 'Unpaid';
     }
 
     const sql = `INSERT INTO sales (client_name, total_price, payment_status, payment_method, customer_id, sale_date) 
                  VALUES (?, ?, ?, ?, ?, NOW())`;
 
-    db.query(sql, [clientName, finalPrice, paymentStatus, paymentMethod, customerId || null], (err, result) => {
+    db.query(sql, [clientName, finalPrice, paymentStatus, method, customerId || null], (err, result) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
 
         const saleId = result.insertId;
@@ -380,25 +458,21 @@ app.post('/api/pay/unified', (req, res) => {
         db.query(itemSql, [itemValues], (itemErr) => {
             if (itemErr) return res.status(500).json({ success: false });
 
-            // Wallet deduction
-if (paymentMethod === 'Advance' && customerId) {
-    db.query("UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?", [amount, customerId]);
+            if (method === 'Advance' && customerId) {
+                db.query("UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?", [amount, customerId]);
+            }
+            if (method === 'Credit' && customerId) {
+                db.query("UPDATE customers SET credit_balance = credit_balance + ? WHERE customer_id = ?", [amount, customerId]);
+            }
+
+            let reason = (method === 'Complimentary') ? 'Staff/Owner Meal' : `Sale (${method})`;
+            paymentStatus = 'Completed';
+            // ALWAYS deduct stock for ALL completed sales
+if (items && items.length > 0) {
+    deductStockWithYield(items, `Sale (${method})`);
 }
 
-// Credit increase
-if (paymentMethod === 'Credit' && customerId) {
-    db.query("UPDATE customers SET credit_balance = credit_balance + ? WHERE customer_id = ?", [amount, customerId]);
-}
-
-// 🔥 INVENTORY ALWAYS RUNS
-let reason = 'Sale';
-if (paymentMethod === 'Complimentary') {
-    reason = 'Staff/Owner Meal';
-}
-
-updateStockLevels(items, reason);
-
-res.json({ success: true, saleId });
+            res.json({ success: true, saleId });
         });
     });
 });
@@ -423,6 +497,19 @@ app.post('/api/callback', (req, res) => {
         }
     );
 
+    db.query(
+    "SELECT si.product_name, si.qty FROM sales_items si JOIN sales s ON si.sale_id = s.id WHERE s.mpesa_checkout_id = ?",
+    [checkoutID],
+    (err, items) => {
+        if (!err && items.length > 0) {
+            deductStockWithYield(items, 'Mpesa Sale');
+        } 
+        if (resultCode === 0 && items.length > 0) {
+    deductStockWithYield(items, 'Mpesa Sale');
+}
+    }
+);
+
     res.json("Received");
 });
 // 5. SALES REPORT
@@ -432,54 +519,61 @@ app.get('/api/reports/sales-summary', (req, res) => {
     const { date } = req.query;
     const selectedDate = date || getLocalDate();
 
-    // Query 1: Itemized Table
-    // Added client_name to the SELECT and GROUP BY
     const itemizedSql = `
         SELECT product_name, SUM(qty) as total_qty, MAX(price) as price, 
-               SUM(qty * price) as total_revenue, payment_status, payment_method, client_name
-        FROM (
-            SELECT si.product_name, si.qty, si.price, s.payment_status, s.payment_method, s.client_name
-            FROM sales_items si
-            JOIN sales s ON si.sale_id = s.id
-            WHERE DATE(s.sale_date) = ?
-            UNION ALL
-            SELECT client_name as product_name, 1 as qty, total_price as price, 
-                   payment_status, payment_method, client_name
-            FROM sales
-            WHERE DATE(sale_date) = ? AND payment_method = 'Topup'
-        ) AS combined
+               SUM(qty * price) as total_revenue, 
+               payment_status, payment_method, client_name
+        FROM sales_items si
+        JOIN sales s ON si.sale_id = s.id
+        WHERE DATE(s.sale_date) = ?
         GROUP BY product_name, payment_status, payment_method, client_name
-        ORDER BY total_revenue DESC`;
+        ORDER BY total_revenue DESC
+    `;
 
-    // ... (Keep the rest of your paymentSql and db.query logic the same)
-
-    // Query 2: Actual Cash Inflow (This is for your Daily Net Card)
-    // ONLY counts 'Cash' and 'MPesa'. Strictly ignores 'Advance', 'Credit', and 'Complimentary'
-    const paymentSql = `
-        SELECT payment_method, SUM(total_price) as total 
-        FROM sales 
-        WHERE DATE(sale_date) = ? 
-        AND payment_status = 'Completed'
-        AND payment_method IN ('Cash', 'MPesa', 'Topup')
-        GROUP BY payment_method`;
-
-    db.query(itemizedSql, [selectedDate, selectedDate], (err, itemResults) => {
+    db.query(itemizedSql, [selectedDate], (err, itemResults) => {
         if (err) return res.status(500).json(err);
 
-        db.query(paymentSql, [selectedDate], (err, payResults) => {
-            if (err) return res.status(500).json(err);
+        const paymentSql = `
+    SELECT 
+        s.payment_method,
+        SUM(si.qty * si.price) as total
+    FROM sales s
+    JOIN sales_items si ON s.id = si.sale_id
+    WHERE DATE(s.sale_date) = ?
+    AND s.payment_status != 'Pending'
+    AND s.payment_method != 'InternalAdjustment'
+    GROUP BY s.payment_method
+`;
 
-            const payments = { Cash: 0, MPesa: 0, Credit: 0, Advance: 0, Topup: 0 };
+        db.query(paymentSql, [selectedDate], (err2, payResults) => {
+            if (err2) return res.status(500).json(err2);
+
+            // 🔥 NORMALIZED BREAKDOWN (IMPORTANT FIX)
+            const payments = {
+                Cash: 0,
+                Mpesa: 0,
+                Wallet: 0,
+                Complimentary: 0
+            };
+
             payResults.forEach(row => {
-                const method = row.payment_method;
-                if (payments.hasOwnProperty(method)) {
-                    payments[method] = parseFloat(row.total);
-                }
-            });
+    const method = row.payment_method;
+    const amount = parseFloat(row.total || 0);
+
+    if (method === 'Cash') {
+        payments.Cash += amount;
+    } else if (method === 'Mpesa' || method === 'M-Pesa') { // ✅ Added check for both
+        payments.Mpesa += amount;
+    } else if (method === 'Advance') {
+        payments.Wallet += amount;
+    } else if (method === 'Complimentary') {
+        payments.Complimentary += amount;
+    }
+});
 
             res.json({
                 itemized: itemResults,
-                payments: payments
+                payments
             });
         });
     });
@@ -490,7 +584,7 @@ app.get('/api/reports/advanced-summary', (req, res) => {
     const sql = `
         SELECT DATE(sale_date) as date, SUM(total_price) as total
         FROM sales
-        WHERE payment_status = 'Completed' AND payment_method IN ('Cash', 'Mpesa')
+        WHERE payment_status = 'Completed' AND payment_method IN ('Cash', 'M-Pesa')
         GROUP BY DATE(sale_date)
         ORDER BY date DESC
         LIMIT 30
@@ -556,7 +650,7 @@ app.get('/api/reports/monthly-cumulative', (req, res) => {
         FROM sales 
         WHERE DATE_FORMAT(sale_date, '%Y-%m') = ? 
         AND payment_status = 'Completed' 
-        AND payment_method IN ('Cash', 'MPesa', 'Topup') -- Ignores 'Advance' and 'Credit'
+        AND payment_method IN ('Cash', 'MPesa') -- Ignores 'Advance' and 'Credit'
     `;
 
     db.query(sql, [month], (err, results) => {
@@ -689,6 +783,7 @@ app.get('/api/inventory/audit-report', (req, res) => {
                 });
             }
         });
+        
         app.get('/api/reports/customer-usage-timeline/:id', (req, res) => {
     const customerId = req.params.id;
 
@@ -725,6 +820,7 @@ app.get('/api/inventory/audit-report', (req, res) => {
         });
     });
 });
+
 
         const finalReport = Object.values(groupedAudit).map(mat => {
             let totalFractionalUsed = 0;
@@ -768,6 +864,71 @@ app.get('/api/inventory/audit-report', (req, res) => {
 
 app.get('/', (req, res) => {
     res.send("POS API running...");
+});
+
+// ================= DATE RANGE REPORT =================
+app.get('/api/reports/date-range', (req, res) => {
+    const { from, to } = req.query;
+
+    if (!from || !to) {
+        return res.status(400).json({ error: "Missing date range" });
+    }
+
+    const itemizedSql = `
+        SELECT 
+            si.product_name,
+            SUM(si.qty) as total_qty,
+            MAX(si.price) as price,
+            SUM(si.qty * si.price) as total_revenue,
+            s.payment_method,
+            s.payment_status
+        FROM sales_items si
+        JOIN sales s ON si.sale_id = s.id
+        WHERE DATE(s.sale_date) BETWEEN ? AND ?
+        GROUP BY si.product_name, s.payment_method, s.payment_status
+    `;
+
+    const paymentsSql = `
+        SELECT payment_method, SUM(total_price) as total
+        FROM sales
+        WHERE DATE(sale_date) BETWEEN ? AND ?
+        AND payment_status = 'Completed'
+        AND payment_method != 'InternalAdjustment'
+        GROUP BY payment_method
+    `;
+
+    db.query(itemizedSql, [from, to], (err, items) => {
+        if (err) return res.status(500).json(err);
+
+        db.query(paymentsSql, [from, to], (err2, paymentsRaw) => {
+            if (err2) return res.status(500).json(err2);
+
+            const payments = {
+                Cash: 0,
+                Mpesa: 0,
+                Wallet: 0,
+                Complimentary: 0
+            };
+
+            paymentsRaw.forEach(row => {
+                const method = row.payment_method;
+                const amount = parseFloat(row.total || 0);
+
+                if (method === 'Cash') payments.Cash += amount;
+                if (method === 'Mpesa' || method === 'M-Pesa') payments.Mpesa += amount;
+                if (method === 'Advance') payments.Wallet += amount;
+                if (method === 'Complimentary') payments.Complimentary += amount;
+            });
+
+            const totalRevenue = payments.Cash + payments.MPesa;
+
+            res.json({
+                itemized: items,
+                payments,
+                totalRevenue
+            });
+        });
+    });
 });
 
 const PORT = process.env.PORT || 5000;
