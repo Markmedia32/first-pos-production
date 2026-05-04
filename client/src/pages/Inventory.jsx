@@ -47,13 +47,19 @@ const Inventory = () => {
                 let displayOpening = "";
 
                 // LOGIC: Potatoes show units, everything else shows cumulative weight (kg)
-                if (item.item_name.toLowerCase().includes("potato")) {
-                    displayStock = `${Math.floor(closingUnits)} (${item.unit_measure} each)`;
-                    displayOpening = `${opening} (${item.unit_measure})`;
-                } else {
-                    displayStock = `${Math.floor(closingUnits * unitWeight)} kg`;
-                    displayOpening = `${Math.floor(opening * unitWeight)} kg`;
-                }
+                // NEW LOGIC: Respect the unit_measure from the database
+const isWeightBased = item.unit_measure.toLowerCase().includes("kg") || 
+                      item.unit_measure.toLowerCase().includes("gram");
+
+if (isWeightBased) {
+    // If it's flour/sugar, show the total weight in kg
+    displayStock = `${Math.floor(closingUnits * unitWeight)} kg`;
+    displayOpening = `${Math.floor(opening * unitWeight)} kg`;
+} else {
+    // For Water (pcs/ml), Potatoes, or anything else, show the count + the unit
+    displayStock = `${Math.floor(closingUnits)} ${item.unit_measure}`;
+    displayOpening = `${opening} ${item.unit_measure}`;
+}
 
                 return { 
                     ...item, 
