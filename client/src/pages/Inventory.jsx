@@ -31,44 +31,42 @@ const Inventory = () => {
             const audit = await axios.get(`${API}/api/inventory/audit-report`);
             
             // Process the data for smart display logic
-            const processedStock = inv.data.map(item => {
+           const processedStock = inv.data.map(item => {
 
     const closingUnits = parseFloat(item.stock_quantity) || 0;
     const opening = parseFloat(item.opening_stock) || 0;
     const added = parseFloat(item.added_stock) || 0;
     const sold = parseFloat(item.units_sold) || 0;
 
-    // -----------------------------
-    // UNIT DISPLAY LOGIC (SAFE FIX)
-    // -----------------------------
     const unit = item.unit_measure || "";
 
-const isWeightBased =
-    unit.toLowerCase().includes("kg") ||
-    unit.toLowerCase().includes("gram") ||
-    unit.toLowerCase().includes("g");
+    const isWeightBased =
+        unit.toLowerCase().includes("kg") ||
+        unit.toLowerCase().includes("gram") ||
+        unit.toLowerCase().includes("g");
 
-let displayStock = "";
-let displayOpening = "";
+    let displayStock = "";
+    let displayOpening = "";
 
-if (isWeightBased) {
-    displayStock = `${Math.floor(closingUnits)} ${unit}`;
-    displayOpening = `${Math.floor(opening)} ${unit}`;
-} else {
-    displayStock = `${Math.floor(closingUnits)} ${unit}`;
-    displayOpening = `${Math.floor(opening)} ${unit}`;
-}
+    if (isWeightBased) {
+        displayStock = `${Math.floor(closingUnits)} ${unit}`;
+        displayOpening = `${Math.floor(opening)} ${unit}`;
+    } else {
+        displayStock = `${Math.floor(closingUnits)} ${unit}`;
+        displayOpening = `${Math.floor(opening)} ${unit}`;
+    }
 
-return {
-    ...item,
-    displayStock,
-    displayOpening,
-    units_sold: Math.ceil(sold),
-    stock_quantity: closingUnits
-};
+    return {
+        ...item,
+        displayStock,
+        displayOpening,
+        units_sold: Math.ceil(sold),
+        stock_quantity: closingUnits
+    };
+});
 
-            setStock(processedStock);
-            setAuditMessages(audit.data);
+setStock(processedStock);
+setAuditMessages(audit.data);
         } catch (err) {
             console.error("Fetch error", err);
         }

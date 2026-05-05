@@ -528,15 +528,35 @@ app.post('/api/callback', (req, res) => {
 
         if (!items || items.length === 0) return;
 
-        // Step 1: Cook first (create cooked stock layer)
+       if (finalStatus === 'Completed') {
+
+    // safety check: prevent double deduction
+    const alreadyProcessedSql = `
+        SELECT stock_deducted FROM sales WHERE mpesa_checkout_id = ?
+    `;
+
+    db.query(alreadyProcessedSql, [checkoutID], (checkErr, rows) => {
+        if (checkErr) return console.error(checkErr);
+
+        if (rows.length > 0 && rows[0].stock_deducted === 1) {
+            return; // already processed → STOP
+        }
+
+        // 1. Cook stock
         cookItems(items);
 
-        // Prevent double deduction (VERY IMPORTANT)
-if (finalStatus === 'Completed') {
-    cookItems(items);
-    deductStockWithYield(items, 'Mpesa Sale (Callback)');
+        // 2. Deduct raw materials
+        deductStockWithYield(items, 'Mpesa Sale (Callback)');
+
+        // 3. Mark as processed (IMPORTANT)
+        db.query(
+            `UPDATE sales SET stock_deducted = 1 WHERE mpesa_checkout_id = ?`,
+            [checkoutID]
+        );
+    });
 }
     }
+    
 );
 
     res.json("Received");
@@ -870,8 +890,7 @@ if (row.menu_item_name && row.total_sold > 0) {
 
 
         const finalReport = Object.values(groupedAudit).map(mat => {
-            let totalFractionalUsed = 0;
-            let kitchenSummary = [];
+
 
             const soldEntries = Object.entries(mat.soldMap || {});
 let totalFractionalUsed = 0;
