@@ -860,30 +860,74 @@ app.get('/api/inventory/audit-report', (req, res) => {
             let totalFractionalUsed = 0;
             let kitchenSummary = [];
 
-            mat.soldItems.forEach(item => {
-                const unitsUsed = item.qty / item.yield;
-                totalFractionalUsed += unitsUsed;
+           // -----------------------------
+// 🔥 NEW: SMART GROUPING LOGIC
+// -----------------------------
+let chapatiBreakdown = {
+    plain: 0,
+    fromProducts: {}
+};
 
-                // Calculate how many portions are left in the currently "Open" bag/unit
-                const fullUnitsOpened = Math.ceil(unitsUsed);
-                const portionsLeft = (fullUnitsOpened * item.yield) - item.qty;
-                
-                kitchenSummary.push(`${portionsLeft} portions left from the opened ${mat.unit}`);
-            });
+mat.soldItems.forEach(item => {
+
+    const isDirect = item.name === mat.name;
+
+    if (isDirect) {
+        // Direct sale (Chapati sold as Chapati)
+        chapatiBreakdown.plain += item.qty;
+    } else {
+        // Derived usage (e.g Smocha → Chapati)
+        const derivedQty = item.qty / item.yield;
+
+        if (!chapatiBreakdown.fromProducts[item.name]) {
+            chapatiBreakdown.fromProducts[item.name] = 0;
+        }
+
+        chapatiBreakdown.fromProducts[item.name] += derivedQty;
+    }
+
+    const unitsUsed = item.qty / item.yield;
+    totalFractionalUsed += unitsUsed;
+});
 
             // CHANGE: We use Math.floor because if 0.04 of a bag is used, 
             // the store is missing 1 full bag (it's now in the kitchen).
             const exactRemaining = mat.totalStartStore - totalFractionalUsed;
             const wholeUnitsInStore = Math.floor(exactRemaining);
             
-            let message = "";
             if (mat.soldItems.length > 0) {
-                const soldDetails = mat.soldItems.map(si => `${si.qty} ${si.name}`).join(', ');
-                message = `Sold: ${soldDetails}. You should have ${kitchenSummary.join(' and ')}. ` +
-                          `The Store should have ${wholeUnitsInStore} full ${mat.unit} remaining.`;
-            } else {
-                message = `No sales recorded. Store should have ${mat.totalStartStore} ${mat.unit}.`;
-            }
+
+    let message = "";
+
+    // 🔥 SPECIAL HANDLING FOR CHAPATI TYPE MATERIALS
+    if (mat.name.toLowerCase().includes("chapati")) {
+
+        const totalDerived = Object.values(chapatiBreakdown.fromProducts)
+            .reduce((a, b) => a + b, 0);
+
+        const totalUsed = chapatiBreakdown.plain + totalDerived;
+
+        const breakdownLines = Object.entries(chapatiBreakdown.fromProducts)
+            .map(([key, val]) => `${Math.round(val)} from ${key}`)
+            .join(', ');
+
+        message = `Sold ${Math.round(totalUsed)} Chapatis. ` +
+                  `${Math.round(chapatiBreakdown.plain)} are plain` +
+                  (breakdownLines ? `, ${breakdownLines}` : '') + `. ` +
+                  `The Store should have ${wholeUnitsInStore} full ${mat.unit} remaining.`;
+
+    } else {
+
+        // NORMAL ITEMS (Samosa, etc)
+        const soldDetails = mat.soldItems
+            .map(si => `${si.qty} ${si.name}`)
+            .join(', ');
+
+        message = `Sold ${soldDetails}. ` +
+                  `The Store should have ${wholeUnitsInStore} ${mat.unit} remaining.`;
+    }
+}
+           
 
             return {
                 item: mat.name,
