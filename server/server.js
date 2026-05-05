@@ -517,7 +517,7 @@ app.get('/api/reports/sales-summary', (req, res) => {
 FROM sales_items si
 JOIN sales s ON si.sale_id = s.id
 WHERE DATE(s.sale_date) = ?
-GROUP BY product_name
+GROUP BY product_name, s.payment_method, s.payment_status, s.client_name
 ORDER BY total_qty DESC
     `;
 
@@ -879,7 +879,7 @@ app.get('/api/reports/date-range', (req, res) => {
         FROM sales_items si
         JOIN sales s ON si.sale_id = s.id
         WHERE DATE(s.sale_date) BETWEEN ? AND ?
-        GROUP BY si.product_name, s.payment_method, s.payment_status
+        GROUP BY si.product_name
     `;
 
     const paymentsSql = `
@@ -916,7 +916,12 @@ app.get('/api/reports/date-range', (req, res) => {
                 if (method === 'CreditCard') payments.CreditCard += amount;
             });
 
-            const totalRevenue = payments.Cash + payments.MPesa;
+            const totalRevenue =
+  payments.Cash +
+  payments.MPesa +
+  payments.Wallet +
+  payments.Complimentary +
+  payments.CreditCard;
 
             res.json({
                 itemized: items,

@@ -102,8 +102,11 @@ const [rangeData, setRangeData] = useState(null);
         const groupKey = `${item.product_name}-${statusKey}-${statusKey === 'normal' ? 'standard' : personName}`;
 
         if (grouped[groupKey]) {
-            grouped[groupKey].total_qty = parseInt(grouped[groupKey].total_qty) + parseInt(item.total_qty);
-            grouped[groupKey].total_revenue = parseFloat(grouped[groupKey].total_revenue) + parseFloat(item.total_revenue);
+            grouped[groupKey].total_qty =
+  Number(grouped[groupKey].total_qty || 0) + Number(item.total_qty || 0);
+
+grouped[groupKey].total_revenue =
+  Number(grouped[groupKey].total_revenue || 0) + Number(item.total_revenue || 0);
         } else {
             grouped[groupKey] = { ...item, statusKey, personName };
         }
@@ -112,7 +115,7 @@ const [rangeData, setRangeData] = useState(null);
     return Object.values(grouped);
 };
 
-  const displayData = reportData;
+  const displayData = getAggregatedData();
   
   const addExpense = () => {
     if (!expenseName || !expenseAmount) return;
@@ -352,7 +355,7 @@ const [rangeData, setRangeData] = useState(null);
           </div>
         </header>
 
-        <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '30px' }}>
+        <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '30px' }}>
           <div className="report-card" style={{ padding: '20px', background: 'white', borderRadius: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
             <div className="label-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
               <PieChart size={16} color="#0071e3" />
