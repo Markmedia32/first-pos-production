@@ -528,35 +528,15 @@ app.post('/api/callback', (req, res) => {
 
         if (!items || items.length === 0) return;
 
-       if (finalStatus === 'Completed') {
-
-    // safety check: prevent double deduction
-    const alreadyProcessedSql = `
-        SELECT stock_deducted FROM sales WHERE mpesa_checkout_id = ?
-    `;
-
-    db.query(alreadyProcessedSql, [checkoutID], (checkErr, rows) => {
-        if (checkErr) return console.error(checkErr);
-
-        if (rows.length > 0 && rows[0].stock_deducted === 1) {
-            return; // already processed → STOP
-        }
-
-        // 1. Cook stock
+        // Step 1: Cook first (create cooked stock layer)
         cookItems(items);
 
-        // 2. Deduct raw materials
-        deductStockWithYield(items, 'Mpesa Sale (Callback)');
-
-        // 3. Mark as processed (IMPORTANT)
-        db.query(
-            `UPDATE sales SET stock_deducted = 1 WHERE mpesa_checkout_id = ?`,
-            [checkoutID]
-        );
-    });
+        // Prevent double deduction (VERY IMPORTANT)
+if (finalStatus === 'Completed') {
+    cookItems(items);
+    deductStockWithYield(items, 'Mpesa Sale (Callback)');
 }
     }
-    
 );
 
     res.json("Received");
@@ -724,29 +704,22 @@ app.get('/api/inventory', (req, res) => {
     startOfWeek.setHours(0, 0, 0, 0);
     const formattedStart = startOfWeek.toISOString().split('T')[0];
 
-   const sql = `
-SELECT 
-    i.item_name,
-    i.unit_measure,
-    i.stock_quantity,
-    i.opening_stock,
-    i.added_stock,
-
-    y.menu_item_name,
-    y.yield_per_unit,
-
-    COALESCE((
-        SELECT SUM(si.qty)
-        FROM sales_items si
-        JOIN sales s ON si.sale_id = s.id
-        WHERE si.product_name = y.menu_item_name
-        AND s.payment_status = 'Completed'
-    ), 0) as total_sold
-
-FROM inventory i
-LEFT JOIN yield_rules y 
-    ON i.item_name = y.material_name
-`;
+    const sql = `
+        SELECT 
+            i.id, 
+            i.item_name, 
+            i.unit_measure, 
+            i.opening_stock, 
+            i.added_stock,
+            COALESCE(SUM(si.qty / y.yield_per_unit), 0) as total_units_sold
+        FROM inventory i
+        LEFT JOIN yield_rules y ON i.item_name = y.material_name
+        LEFT JOIN sales_items si ON y.menu_item_name = si.product_name
+        LEFT JOIN sales s ON si.sale_id = s.id 
+            AND s.payment_status = 'Completed' 
+            AND s.sale_date >= ?
+        GROUP BY i.id
+    `;
 
     db.query(sql, [formattedStart], (err, results) => {
         if (err) return res.status(500).json(err);
@@ -824,42 +797,26 @@ app.get('/api/inventory/audit-report', (req, res) => {
     db.query(sql, (err, results) => {
         if (err) return res.status(500).json(err);
 
-        const uniqueSales = {};
-
-    results.forEach(r => {
-        const key = r.menu_item_name + "_" + r.item_name;
-
-        if (!uniqueSales[key]) {
-            uniqueSales[key] = { ...r };
-        } else {
-            uniqueSales[key].total_sold += Number(r.total_sold || 0);
-        }
-    });
-
-    const cleanedResults = Object.values(uniqueSales);
-    
         const groupedAudit = {};
 
-results.forEach(row => {
-    if (!row.item_name) return;
-
-    if (!groupedAudit[row.item_name]) {
-        groupedAudit[row.item_name] = {
-            name: row.item_name,
-            unit: row.unit_measure,
-            totalStartStore: Number(row.stock_quantity || 0),
-            soldMap: {}
-        };
-    }
-
-    if (row.menu_item_name && row.total_sold) {
-        const key = row.menu_item_name;
-
-        groupedAudit[row.item_name].soldMap[key] =
-            (groupedAudit[row.item_name].soldMap[key] || 0) +
-            Number(row.total_sold || 0);
-    }
-});
+        results.forEach(row => {
+            if (!groupedAudit[row.item_name]) {
+                groupedAudit[row.item_name] = {
+                    name: row.item_name,
+                    unit: row.unit_measure,
+                    currentInStore: row.stock_quantity,
+                    totalStartStore: parseFloat(row.opening_stock) + parseFloat(row.added_stock),
+                    soldItems: []
+                };
+            }
+            if (row.menu_item_name && row.total_sold > 0) {
+                groupedAudit[row.item_name].soldItems.push({
+                    name: row.menu_item_name,
+                    qty: row.total_sold,
+                    yield: row.yield_per_unit
+                });
+            }
+        });
         
         app.get('/api/reports/customer-usage-timeline/:id', (req, res) => {
     const customerId = req.params.id;
@@ -900,21 +857,19 @@ results.forEach(row => {
 
 
         const finalReport = Object.values(groupedAudit).map(mat => {
+            let totalFractionalUsed = 0;
+            let kitchenSummary = [];
 
+            mat.soldItems.forEach(item => {
+                const unitsUsed = item.qty / item.yield;
+                totalFractionalUsed += unitsUsed;
 
-            const soldEntries = Object.entries(mat.soldMap || {});
-let totalFractionalUsed = 0;
-let kitchenSummary = [];
-
-soldEntries.forEach(([menuItem, qty]) => {
-    const rule = results.find(r => r.menu_item_name === menuItem);
-    if (!rule) return;
-
-    const unitsUsed = qty / rule.yield_per_unit;
-    totalFractionalUsed += unitsUsed;
-
-    kitchenSummary.push(`${qty} ${menuItem}`);
-});
+                // Calculate how many portions are left in the currently "Open" bag/unit
+                const fullUnitsOpened = Math.ceil(unitsUsed);
+                const portionsLeft = (fullUnitsOpened * item.yield) - item.qty;
+                
+                kitchenSummary.push(`${portionsLeft} portions left from the opened ${mat.unit}`);
+            });
 
             // CHANGE: We use Math.floor because if 0.04 of a bag is used, 
             // the store is missing 1 full bag (it's now in the kitchen).
@@ -922,7 +877,7 @@ soldEntries.forEach(([menuItem, qty]) => {
             const wholeUnitsInStore = Math.floor(exactRemaining);
             
             let message = "";
-            if (soldEntries.length > 0) {
+            if (mat.soldItems.length > 0) {
                 const soldDetails = mat.soldItems.map(si => `${si.qty} ${si.name}`).join(', ');
                 message = `Sold: ${soldDetails}. You should have ${kitchenSummary.join(' and ')}. ` +
                           `The Store should have ${wholeUnitsInStore} full ${mat.unit} remaining.`;
