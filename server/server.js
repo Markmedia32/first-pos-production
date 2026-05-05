@@ -840,23 +840,24 @@ app.get('/api/inventory/audit-report', (req, res) => {
     
         const groupedAudit = {};
 
-        results.forEach(row => {
+results.forEach(row => {
     if (!row.item_name) return;
 
-    // 1. Ensure parent object exists
     if (!groupedAudit[row.item_name]) {
         groupedAudit[row.item_name] = {
             name: row.item_name,
             unit: row.unit_measure,
-            totalStartStore: row.stock_quantity,
+            totalStartStore: Number(row.stock_quantity || 0),
             soldMap: {}
         };
     }
 
-    // 2. Only add sales if valid
-    if (row.menu_item_name && row.total_sold > 0) {
-        groupedAudit[row.item_name].soldMap[row.menu_item_name] =
-            (groupedAudit[row.item_name].soldMap[row.menu_item_name] || 0) + Number(row.total_sold);
+    if (row.menu_item_name && row.total_sold) {
+        const key = row.menu_item_name;
+
+        groupedAudit[row.item_name].soldMap[key] =
+            (groupedAudit[row.item_name].soldMap[key] || 0) +
+            Number(row.total_sold || 0);
     }
 });
         
