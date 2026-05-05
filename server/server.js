@@ -879,7 +879,7 @@ app.get('/api/reports/date-range', (req, res) => {
         FROM sales_items si
         JOIN sales s ON si.sale_id = s.id
         WHERE DATE(s.sale_date) BETWEEN ? AND ?
-        GROUP BY si.product_name
+        GROUP BY si.product_name, s.payment_method, s.payment_status
     `;
 
     const paymentsSql = `
