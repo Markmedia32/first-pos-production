@@ -135,14 +135,15 @@ const cookItems = (items) => {
                     const cookedItem = item.product_name;
                     const qtyCooked = item.qty; // plates sold or prepared
 
-                    if (!cookedStock[cookedItem]) {
-                        cookedStock[cookedItem] = 0;
-                    }
+                   if (!cookedStock[cookedItem]) {
+    cookedStock[cookedItem] = 0;
+}
 
-                    // ADD cooked stock
-                    console.log("COOKED:", cookedItem, qtyCooked);
+// ✅ ACTUAL FIX
+cookedStock[cookedItem] += qtyCooked;
 
-                    console.log("COOKED STOCK UPDATED:", cookedStock);
+console.log("COOKED:", cookedItem, qtyCooked);
+console.log("COOKED STOCK UPDATED:", cookedStock);
                 });
             }
         );
@@ -529,12 +530,8 @@ app.post('/api/callback', (req, res) => {
         if (!items || items.length === 0) return;
 
         // Step 1: Cook first (create cooked stock layer)
-        cookItems(items);
-
-        // Prevent double deduction (VERY IMPORTANT)
-if (finalStatus === 'Completed') {
-    cookItems(items);
-    deductStockWithYield(items, 'Mpesa Sale (Callback)');
+       if (finalStatus === 'Completed') {
+    cookItems(items); // ✅ ONLY ONCE
 }
     }
 );
@@ -895,11 +892,10 @@ mat.soldItems.forEach(item => {
             const exactRemaining = mat.totalStartStore - totalFractionalUsed;
             const wholeUnitsInStore = Math.floor(exactRemaining);
             
-            if (mat.soldItems.length > 0) {
+ let message = ""; // ✅ MOVE OUTSIDE
 
-    let message = "";
+if (mat.soldItems.length > 0) {
 
-    // 🔥 SPECIAL HANDLING FOR CHAPATI TYPE MATERIALS
     if (mat.name.toLowerCase().includes("chapati")) {
 
         const totalDerived = Object.values(chapatiBreakdown.fromProducts)
@@ -918,7 +914,6 @@ mat.soldItems.forEach(item => {
 
     } else {
 
-        // NORMAL ITEMS (Samosa, etc)
         const soldDetails = mat.soldItems
             .map(si => `${si.qty} ${si.name}`)
             .join(', ');
@@ -926,6 +921,10 @@ mat.soldItems.forEach(item => {
         message = `Sold ${soldDetails}. ` +
                   `The Store should have ${wholeUnitsInStore} ${mat.unit} remaining.`;
     }
+
+} else {
+    // ✅ fallback so message is NEVER undefined
+    message = `No usage recorded. Store has ${wholeUnitsInStore} ${mat.unit}.`;
 }
            
 
