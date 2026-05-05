@@ -916,18 +916,18 @@ app.get('/api/reports/date-range', (req, res) => {
                 if (method === 'CreditCard') payments.CreditCard += amount;
             });
 
-            const totalRevenue =
-  payments.Cash +
-  payments.MPesa +
-  payments.Wallet +
-  payments.Complimentary +
-  payments.CreditCard;
+           const totalRevenue =
+    payments.Cash +
+    payments.MPesa +
+    payments.Wallet +
+    payments.Complimentary +
+    payments.CreditCard;
 
-            res.json({
-                itemized: items,
-                payments,
-                totalRevenue
-            });
+res.json({
+    itemized: items || [],
+    payments,
+    totalRevenue: totalRevenue || 0
+});
         });
     });
 });

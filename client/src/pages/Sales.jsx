@@ -447,16 +447,16 @@ grouped[groupKey].total_revenue =
     </button>
   </div>
 
-  {rangeData && (
+  {rangeData?.payments && (
     <div className="range-results">
       
       <div className="range-summary">
-        <p>Cash: <b>Ksh {rangeData.payments.Cash}</b></p>
-        <p>MPesa: <b>Ksh {rangeData.payments.MPesa}</b></p>
-        <p>Wallet Used: <b>Ksh {rangeData.payments.Wallet}</b></p>
-        <p style={{color:'#7e22ce'}}>
-          Complimentary: <b>Ksh {rangeData.payments.Complimentary}</b>
-        </p>
+        <p>Cash: <b>Ksh {rangeData.payments?.Cash || 0}</b></p>
+<p>MPesa: <b>Ksh {rangeData.payments?.MPesa || 0}</b></p>
+<p>Wallet Used: <b>Ksh {rangeData.payments?.Wallet || 0}</b></p>
+<p style={{color:'#7e22ce'}}>
+  Complimentary: <b>Ksh {rangeData.payments?.Complimentary || 0}</b>
+</p>
       </div>
 
       <h4>Total Revenue (Cash + MPesa)</h4>
