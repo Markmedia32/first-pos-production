@@ -704,22 +704,29 @@ app.get('/api/inventory', (req, res) => {
     startOfWeek.setHours(0, 0, 0, 0);
     const formattedStart = startOfWeek.toISOString().split('T')[0];
 
-    const sql = `
-        SELECT 
-            i.id, 
-            i.item_name, 
-            i.unit_measure, 
-            i.opening_stock, 
-            i.added_stock,
-            COALESCE(SUM(si.qty / y.yield_per_unit), 0) as total_units_sold
-        FROM inventory i
-        LEFT JOIN yield_rules y ON i.item_name = y.material_name
-        LEFT JOIN sales_items si ON y.menu_item_name = si.product_name
-        LEFT JOIN sales s ON si.sale_id = s.id 
-            AND s.payment_status = 'Completed' 
-            AND s.sale_date >= ?
-        GROUP BY i.id
-    `;
+   const sql = `
+SELECT 
+    i.item_name,
+    i.unit_measure,
+    i.stock_quantity,
+    i.opening_stock,
+    i.added_stock,
+
+    y.menu_item_name,
+    y.yield_per_unit,
+
+    COALESCE((
+        SELECT SUM(si.qty)
+        FROM sales_items si
+        JOIN sales s ON si.sale_id = s.id
+        WHERE si.product_name = y.menu_item_name
+        AND s.payment_status = 'Completed'
+    ), 0) as total_sold
+
+FROM inventory i
+LEFT JOIN yield_rules y 
+    ON i.item_name = y.material_name
+`;
 
     db.query(sql, [formattedStart], (err, results) => {
         if (err) return res.status(500).json(err);
@@ -797,25 +804,31 @@ app.get('/api/inventory/audit-report', (req, res) => {
     db.query(sql, (err, results) => {
         if (err) return res.status(500).json(err);
 
+        const uniqueSales = {};
+
+    results.forEach(r => {
+        const key = r.menu_item_name + "_" + r.item_name;
+
+        if (!uniqueSales[key]) {
+            uniqueSales[key] = { ...r };
+        } else {
+            uniqueSales[key].total_sold += Number(r.total_sold || 0);
+        }
+    });
+
+    const cleanedResults = Object.values(uniqueSales);
+    
         const groupedAudit = {};
 
         results.forEach(row => {
-            if (!groupedAudit[row.item_name]) {
-                groupedAudit[row.item_name] = {
-                    name: row.item_name,
-                    unit: row.unit_measure,
-                    currentInStore: row.stock_quantity,
-                    totalStartStore: parseFloat(row.opening_stock) + parseFloat(row.added_stock),
-                    soldItems: []
-                };
-            }
-            if (row.menu_item_name && row.total_sold > 0) {
-                groupedAudit[row.item_name].soldItems.push({
-                    name: row.menu_item_name,
-                    qty: row.total_sold,
-                    yield: row.yield_per_unit
-                });
-            }
+           if (!groupedAudit[row.item_name].soldMap) {
+    groupedAudit[row.item_name].soldMap = {};
+}
+
+if (row.menu_item_name && row.total_sold > 0) {
+    groupedAudit[row.item_name].soldMap[row.menu_item_name] = row.total_sold;
+}
+            
         });
         
         app.get('/api/reports/customer-usage-timeline/:id', (req, res) => {
@@ -860,16 +873,19 @@ app.get('/api/inventory/audit-report', (req, res) => {
             let totalFractionalUsed = 0;
             let kitchenSummary = [];
 
-            mat.soldItems.forEach(item => {
-                const unitsUsed = item.qty / item.yield;
-                totalFractionalUsed += unitsUsed;
+            const soldEntries = Object.entries(mat.soldMap || {});
+let totalFractionalUsed = 0;
+let kitchenSummary = [];
 
-                // Calculate how many portions are left in the currently "Open" bag/unit
-                const fullUnitsOpened = Math.ceil(unitsUsed);
-                const portionsLeft = (fullUnitsOpened * item.yield) - item.qty;
-                
-                kitchenSummary.push(`${portionsLeft} portions left from the opened ${mat.unit}`);
-            });
+soldEntries.forEach(([menuItem, qty]) => {
+    const rule = results.find(r => r.menu_item_name === menuItem);
+    if (!rule) return;
+
+    const unitsUsed = qty / rule.yield_per_unit;
+    totalFractionalUsed += unitsUsed;
+
+    kitchenSummary.push(`${qty} ${menuItem}`);
+});
 
             // CHANGE: We use Math.floor because if 0.04 of a bag is used, 
             // the store is missing 1 full bag (it's now in the kitchen).
@@ -877,7 +893,7 @@ app.get('/api/inventory/audit-report', (req, res) => {
             const wholeUnitsInStore = Math.floor(exactRemaining);
             
             let message = "";
-            if (mat.soldItems.length > 0) {
+            if (soldEntries.length > 0) {
                 const soldDetails = mat.soldItems.map(si => `${si.qty} ${si.name}`).join(', ');
                 message = `Sold: ${soldDetails}. You should have ${kitchenSummary.join(' and ')}. ` +
                           `The Store should have ${wholeUnitsInStore} full ${mat.unit} remaining.`;
