@@ -136,12 +136,24 @@ grouped[groupKey].total_revenue =
   `${API}/api/reports/date-range?from=${fromDate}&to=${toDate}`
 );
 
+console.log("REPORT DATA:", res.data);
+
     const data = res.data;
+    if (!data || !data.payments) {
+  alert("No report data returned");
+  return;
+}
     setRangeData(data);
 
-    const printWindow = window.open('', '_blank');
+    try {
+  const printWindow = window.open('', '_blank');
 
-    printWindow.document.write(`
+  if (!printWindow) {
+    alert("Popup blocked! Please allow popups for this site.");
+    return;
+  }
+
+  printWindow.document.write(`
       <html>
         <head>
           <title>Financial Report</title>
@@ -241,22 +253,22 @@ grouped[groupKey].total_revenue =
           <div class="summary">
             <div class="card">
               <h3>Cash</h3>
-              <p>Ksh ${data.payments.Cash.toLocaleString()}</p>
+              <p>Ksh ${(data.payments?.Cash || 0).toLocaleString()}</p>
             </div>
 
             <div class="card">
               <h3>M-Pesa</h3>
-              <p>Ksh ${data.payments.MPesa.toLocaleString()}</p>
+              <p>Ksh ${(data.payments?.MPesa || 0).toLocaleString()}</p>
             </div>
 
             <div class="card">
               <h3>Wallet</h3>
-              <p>Ksh ${data.payments.Wallet.toLocaleString()}</p>
+              <p>Ksh ${(data.payments?.Wallet || 0).toLocaleString()}</p>
             </div>
 
             <div class="card">
               <h3>Complimentary</h3>
-              <p>Ksh ${data.payments.Complimentary.toLocaleString()}</p>
+              <p>Ksh ${(data.payments?.Complimentary || 0).toLocaleString()}</p>
             </div>
           </div>
 
@@ -298,6 +310,10 @@ grouped[groupKey].total_revenue =
     `);
 
     printWindow.document.close();
+
+} catch (err) {
+  console.error("PRINT ERROR:", err);
+}
 
   } catch (err) {
     console.error("Date Range Error:", err);

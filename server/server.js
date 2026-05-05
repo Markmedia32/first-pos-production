@@ -611,7 +611,7 @@ app.get('/api/reports/top-items', (req, res) => {
         JOIN sales s ON si.sale_id = s.id
         WHERE DATE(s.sale_date) = ?
         AND s.payment_status = 'Completed'
-        GROUP BY si.product_name
+        GROUP BY si.product_name, s.payment_method, s.payment_status
         ORDER BY total_qty DESC
         LIMIT 5
     `;
