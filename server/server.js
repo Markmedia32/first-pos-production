@@ -892,10 +892,16 @@ app.get('/api/reports/date-range', (req, res) => {
     `;
 
     db.query(itemizedSql, [from, to], (err, items) => {
-        if (err) return res.status(500).json(err);
+        if (err) {
+            console.error("ITEM QUERY ERROR:", err);
+            return res.status(500).json({ error: "Item query failed" });
+        }
 
         db.query(paymentsSql, [from, to], (err2, paymentsRaw) => {
-            if (err2) return res.status(500).json(err2);
+            if (err2) {
+                console.error("PAYMENT QUERY ERROR:", err2);
+                return res.status(500).json({ error: "Payment query failed" });
+            }
 
             const payments = {
                 Cash: 0,
@@ -905,29 +911,30 @@ app.get('/api/reports/date-range', (req, res) => {
                 CreditCard: 0
             };
 
-            paymentsRaw.forEach(row => {
+            // ✅ SAFE LOOP
+            (paymentsRaw || []).forEach(row => {
                 const method = row.payment_method;
                 const amount = parseFloat(row.total || 0);
 
                 if (method === 'Cash') payments.Cash += amount;
-                if (method === 'Mpesa' || method === 'M-Pesa' || method === 'MPesa') payments.MPesa += amount;
-                if (method === 'Advance') payments.Wallet += amount;
-                if (method === 'Complimentary') payments.Complimentary += amount;
-                if (method === 'CreditCard') payments.CreditCard += amount;
+                else if (method && method.toLowerCase().includes('mpesa')) payments.MPesa += amount;
+                else if (method === 'Advance') payments.Wallet += amount;
+                else if (method === 'Complimentary') payments.Complimentary += amount;
+                else if (method === 'CreditCard') payments.CreditCard += amount;
             });
 
-           const totalRevenue =
-    payments.Cash +
-    payments.MPesa +
-    payments.Wallet +
-    payments.Complimentary +
-    payments.CreditCard;
+            const totalRevenue =
+                payments.Cash +
+                payments.MPesa +
+                payments.Wallet +
+                payments.Complimentary +
+                payments.CreditCard;
 
-res.json({
-    itemized: items || [],
-    payments,
-    totalRevenue: totalRevenue || 0
-});
+            res.json({
+                itemized: items || [],
+                payments,
+                totalRevenue: totalRevenue || 0
+            });
         });
     });
 });
