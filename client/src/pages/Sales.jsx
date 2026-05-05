@@ -278,7 +278,7 @@ const [rangeData, setRangeData] = useState(null);
           </table>
 
           <div class="total">
-            Total Revenue: Ksh ${data.totalRevenue.toLocaleString()}
+            Total Revenue: Ksh ${(data.totalRevenue || 0).toLocaleString()}
           </div>
 
           <div class="footer">

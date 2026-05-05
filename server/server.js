@@ -894,7 +894,7 @@ app.get('/api/reports/date-range', (req, res) => {
 
             const payments = {
                 Cash: 0,
-                Mpesa: 0,
+                MPesa: 0,
                 Wallet: 0,
                 Complimentary: 0
             };
@@ -904,7 +904,7 @@ app.get('/api/reports/date-range', (req, res) => {
                 const amount = parseFloat(row.total || 0);
 
                 if (method === 'Cash') payments.Cash += amount;
-                if (method === 'Mpesa' || method === 'M-Pesa') payments.Mpesa += amount;
+                if (method === 'Mpesa' || method === 'M-Pesa' || method === 'MPesa') payments.MPesa += amount;
                 if (method === 'Advance') payments.Wallet += amount;
                 if (method === 'Complimentary') payments.Complimentary += amount;
             });
