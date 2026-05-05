@@ -14,7 +14,8 @@ const Sales = () => {
   Cash: 0,
   MPesa: 0,
   Wallet: 0,
-  Complimentary: 0
+  Complimentary: 0,
+  CreditCard: 0
 });
 const [fromDate, setFromDate] = useState('');
 const [toDate, setToDate] = useState('');
@@ -111,7 +112,7 @@ const [rangeData, setRangeData] = useState(null);
     return Object.values(grouped);
 };
 
-  const displayData = getAggregatedData();
+  const displayData = reportData;
   
   const addExpense = () => {
     if (!expenseName || !expenseAmount) return;
@@ -413,6 +414,11 @@ const [rangeData, setRangeData] = useState(null);
 <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#7e22ce' }}>
   <Gift size={16} /> 
   Complimentary: <b>{paymentMethods.Complimentary?.toLocaleString()}</b>
+</span>
+
+<span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+  <CreditCard size={16} /> 
+  Card: <b>{paymentMethods.CreditCard?.toLocaleString()}</b>
 </span>
 
 </div>

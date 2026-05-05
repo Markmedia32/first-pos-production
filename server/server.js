@@ -429,7 +429,7 @@ app.post('/api/pay/unified', (req, res) => {
     }
 
     if (method === 'Complimentary') {
-        finalPrice = 0;
+    finalPrice = amount; 
     } else if (method === 'Credit') {
         paymentStatus = 'Unpaid';
     }
@@ -509,14 +509,16 @@ app.get('/api/reports/sales-summary', (req, res) => {
     const selectedDate = date || getLocalDate();
 
     const itemizedSql = `
-        SELECT product_name, SUM(qty) as total_qty, MAX(price) as price, 
-               SUM(qty * price) as total_revenue, 
-               payment_status, payment_method, client_name
-        FROM sales_items si
-        JOIN sales s ON si.sale_id = s.id
-        WHERE DATE(s.sale_date) = ?
-        GROUP BY product_name, payment_status, payment_method, client_name
-        ORDER BY total_revenue DESC
+        SELECT 
+  product_name, 
+  SUM(qty) as total_qty, 
+  MAX(price) as price, 
+  SUM(qty * price) as total_revenue
+FROM sales_items si
+JOIN sales s ON si.sale_id = s.id
+WHERE DATE(s.sale_date) = ?
+GROUP BY product_name
+ORDER BY total_qty DESC
     `;
 
     db.query(itemizedSql, [selectedDate], (err, itemResults) => {
@@ -542,7 +544,8 @@ app.get('/api/reports/sales-summary', (req, res) => {
                 Cash: 0,
                 MPesa: 0,
                 Wallet: 0,
-                Complimentary: 0
+                Complimentary: 0,
+                CreditCard: 0
             };
 
             payResults.forEach(row => {
@@ -557,7 +560,9 @@ app.get('/api/reports/sales-summary', (req, res) => {
         payments.Wallet += amount;
     } else if (method === 'Complimentary') {
         payments.Complimentary += amount;
-    }
+    } else if (method === 'CreditCard') {
+    payments.CreditCard += amount;
+}
 });
 
             res.json({
@@ -896,7 +901,8 @@ app.get('/api/reports/date-range', (req, res) => {
                 Cash: 0,
                 MPesa: 0,
                 Wallet: 0,
-                Complimentary: 0
+                Complimentary: 0,
+                CreditCard: 0
             };
 
             paymentsRaw.forEach(row => {
@@ -907,6 +913,7 @@ app.get('/api/reports/date-range', (req, res) => {
                 if (method === 'Mpesa' || method === 'M-Pesa' || method === 'MPesa') payments.MPesa += amount;
                 if (method === 'Advance') payments.Wallet += amount;
                 if (method === 'Complimentary') payments.Complimentary += amount;
+                if (method === 'CreditCard') payments.CreditCard += amount;
             });
 
             const totalRevenue = payments.Cash + payments.MPesa;
