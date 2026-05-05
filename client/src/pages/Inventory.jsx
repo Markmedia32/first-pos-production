@@ -32,43 +32,40 @@ const Inventory = () => {
             
             // Process the data for smart display logic
             const processedStock = inv.data.map(item => {
-                // Extract number from "2kg Packet" -> 2
-                const weightMatch = item.unit_measure.match(/(\d+)/);
-                const unitWeight = weightMatch ? parseInt(weightMatch[0]) : 1;
-                
-                const opening = parseFloat(item.opening_stock) || 0;
-                const added = parseFloat(item.added_stock) || 0;
-                const sold = parseFloat(item.units_sold) || 0;
-                
-                // Calculate closing balance in units
-                const closingUnits = opening + added - sold;
 
-                let displayStock = "";
-                let displayOpening = "";
+    const closingUnits = parseFloat(item.stock_quantity) || 0;
+    const opening = parseFloat(item.opening_stock) || 0;
+    const added = parseFloat(item.added_stock) || 0;
+    const sold = parseFloat(item.units_sold) || 0;
 
-                // LOGIC: Potatoes show units, everything else shows cumulative weight (kg)
-                // NEW LOGIC: Respect the unit_measure from the database
-const isWeightBased = item.unit_measure.toLowerCase().includes("kg") || 
-                      item.unit_measure.toLowerCase().includes("gram");
+    // -----------------------------
+    // UNIT DISPLAY LOGIC (SAFE FIX)
+    // -----------------------------
+    const unit = item.unit_measure || "";
+
+const isWeightBased =
+    unit.toLowerCase().includes("kg") ||
+    unit.toLowerCase().includes("gram") ||
+    unit.toLowerCase().includes("g");
+
+let displayStock = "";
+let displayOpening = "";
 
 if (isWeightBased) {
-    // If it's flour/sugar, show the total weight in kg
-    displayStock = `${Math.floor(closingUnits * unitWeight)} kg`;
-    displayOpening = `${Math.floor(opening * unitWeight)} kg`;
+    displayStock = `${Math.floor(closingUnits)} ${unit}`;
+    displayOpening = `${Math.floor(opening)} ${unit}`;
 } else {
-    // For Water (pcs/ml), Potatoes, or anything else, show the count + the unit
-    displayStock = `${Math.floor(closingUnits)} ${item.unit_measure}`;
-    displayOpening = `${opening} ${item.unit_measure}`;
+    displayStock = `${Math.floor(closingUnits)} ${unit}`;
+    displayOpening = `${Math.floor(opening)} ${unit}`;
 }
 
-                return { 
-                    ...item, 
-                    displayStock, 
-                    displayOpening,
-                    units_sold: Math.ceil(sold), // Round up to show whole units sold
-                    stock_quantity: closingUnits 
-                };
-            });
+return {
+    ...item,
+    displayStock,
+    displayOpening,
+    units_sold: Math.ceil(sold),
+    stock_quantity: closingUnits
+};
 
             setStock(processedStock);
             setAuditMessages(audit.data);

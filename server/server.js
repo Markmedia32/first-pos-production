@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 const datetime = require('node-datetime');
 require('dotenv').config();
+let cookedStock = {};
 
 const app = express();
 
@@ -51,49 +52,43 @@ const generateToken = async (req, res, next) => {
 };
 
 const deductStockWithYield = (items, reason = 'Sale') => {
-
     items.forEach(item => {
 
         const sql = `
-            SELECT y.material_name, y.yield_per_unit
-            FROM yield_rules y
-            WHERE y.menu_item_name = ?
+            SELECT material_name, yield_per_unit
+            FROM yield_rules
+            WHERE menu_item_name = ?
         `;
 
-        db.query(sql, [item.product_name], (err, results) => {
+        db.query(sql, [item.product_name], (err, rules) => {
+            if (err) return console.error(err);
 
-            if (err) {
-                console.error("Yield lookup error:", err);
-                return;
-            }
-
-            if (results.length === 0) {
-                // fallback: no yield rule → assume 1:1
+            if (!rules.length) {
+                // fallback direct deduction
                 db.query(
                     "UPDATE inventory SET stock_quantity = stock_quantity - ? WHERE item_name = ?",
                     [item.qty, item.product_name]
                 );
-
                 return;
             }
 
-            results.forEach(rule => {
+            rules.forEach(rule => {
 
                 const material = rule.material_name;
-                const yieldPerUnit = parseFloat(rule.yield_per_unit);
+                const yieldPerUnit = Number(rule.yield_per_unit);
 
-                // actual deduction logic
-                const materialQtyUsed = item.qty / yieldPerUnit;
+                // ✅ FIXED LOGIC
+                const materialUsed = item.qty * (1 / yieldPerUnit);
 
                 db.query(
                     "UPDATE inventory SET stock_quantity = stock_quantity - ? WHERE item_name = ?",
-                    [materialQtyUsed, material]
+                    [materialUsed, material]
                 );
 
                 db.query(`
                     INSERT INTO inventory_logs (item_name, qty, reason, created_at)
                     VALUES (?, ?, ?, NOW())
-                `, [material, materialQtyUsed, reason]);
+                `, [material, materialUsed, reason]);
             });
         });
     });
@@ -121,6 +116,37 @@ const safeDeductStock = (items, reason = 'Sale') => {
     } catch (err) {
         console.error("Stock deduction failed:", err);
     }
+};
+
+const cookItems = (items) => {
+    items.forEach(item => {
+
+        db.query(
+            `SELECT material_name, yield_per_unit 
+             FROM yield_rules 
+             WHERE menu_item_name = ?`,
+            [item.product_name],
+            (err, rules) => {
+
+                if (err || rules.length === 0) return;
+
+                rules.forEach(rule => {
+
+                    const cookedItem = item.product_name;
+                    const qtyCooked = item.qty; // plates sold or prepared
+
+                    if (!cookedStock[cookedItem]) {
+                        cookedStock[cookedItem] = 0;
+                    }
+
+                    // ADD cooked stock
+                    console.log("COOKED:", cookedItem, qtyCooked);
+
+                    console.log("COOKED STOCK UPDATED:", cookedStock);
+                });
+            }
+        );
+    });
 };
 
 // --- ROUTES ---
@@ -383,7 +409,7 @@ app.post('/api/pay/cash', (req, res) => {
     const { clientName, amount, items } = req.body;
 
     const sql = "INSERT INTO sales (client_name, total_price, payment_status, sale_date) VALUES (?, ?, 'Completed', NOW())";
-    deductStockWithYield(items, 'Cash Sale');
+    
 
     db.query(sql, [clientName, amount], (err, result) => {
         if (err) {
@@ -458,6 +484,7 @@ app.post('/api/pay/unified', (req, res) => {
             paymentStatus = 'Completed';
             // ALWAYS deduct stock for ALL completed sales
 if (items && items.length > 0) {
+    cookItems(items); // 👈 ADD THIS
     deductStockWithYield(items, `Sale (${method})`);
 }
 
@@ -487,14 +514,27 @@ app.post('/api/callback', (req, res) => {
     );
 
     db.query(
-    "SELECT si.product_name, si.qty FROM sales_items si JOIN sales s ON si.sale_id = s.id WHERE s.mpesa_checkout_id = ?",
+    `SELECT si.product_name, si.qty 
+     FROM sales_items si 
+     JOIN sales s ON si.sale_id = s.id 
+     WHERE s.mpesa_checkout_id = ?`,
     [checkoutID],
     (err, items) => {
-        if (!err && items.length > 0) {
-            deductStockWithYield(items, 'Mpesa Sale');
-        } 
-        if (resultCode === 0 && items.length > 0) {
-    deductStockWithYield(items, 'Mpesa Sale');
+
+        if (err) {
+            console.error("Callback items fetch error:", err);
+            return;
+        }
+
+        if (!items || items.length === 0) return;
+
+        // Step 1: Cook first (create cooked stock layer)
+        cookItems(items);
+
+        // Prevent double deduction (VERY IMPORTANT)
+if (finalStatus === 'Completed') {
+    cookItems(items);
+    deductStockWithYield(items, 'Mpesa Sale (Callback)');
 }
     }
 );
@@ -936,6 +976,63 @@ app.get('/api/reports/date-range', (req, res) => {
                 totalRevenue: totalRevenue || 0
             });
         });
+    });
+});
+
+app.post('/api/kitchen/cook', (req, res) => {
+    const { menu_item_name, quantity } = req.body;
+
+    const sql = `
+        SELECT material_name, yield_per_unit
+        FROM yield_rules
+        WHERE menu_item_name = ?
+    `;
+
+    db.query(sql, [menu_item_name], (err, rules) => {
+        if (err) return res.status(500).json(err);
+
+        if (!rules.length) {
+            return res.status(400).json({ message: "No yield rule found" });
+        }
+
+        let rawUsageSummary = [];
+
+        rules.forEach(rule => {
+
+            const material = rule.material_name;
+            const yield = parseFloat(rule.yield_per_unit);
+
+            // RAW CONSUMPTION HAPPENS HERE (ONLY WHEN COOKING)
+            const rawUsed = quantity / yield;
+
+            db.query(
+                `UPDATE inventory 
+                 SET stock_quantity = stock_quantity - ?
+                 WHERE item_name = ?`,
+                [rawUsed, material]
+            );
+
+            rawUsageSummary.push({
+                material,
+                used: rawUsed
+            });
+        });
+
+        // Add cooked stock
+        db.query(
+            `INSERT INTO cooked_stock (menu_item_name, quantity)
+             VALUES (?, ?)`,
+            [menu_item_name, quantity]
+        );
+
+        // Log production
+        db.query(
+            `INSERT INTO production_log (menu_item_name, quantity_produced, raw_used)
+             VALUES (?, ?, ?)`,
+            [menu_item_name, quantity, JSON.stringify(rawUsageSummary)]
+        );
+
+        res.json({ success: true, message: "Cooking completed" });
     });
 });
 
