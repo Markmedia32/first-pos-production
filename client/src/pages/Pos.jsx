@@ -218,7 +218,7 @@ const Pos = () => {
           <div className="action-buttons-grid">
             <button 
   className="pay-btn mpesa" 
-  onClick={() => handlePayment('Mpesa')} 
+  onClick={() => handlePayment('MPesa')} 
   disabled={loading}
 >
   <Smartphone size={16}/> PAYMENT VIA M-PESA

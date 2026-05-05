@@ -425,7 +425,7 @@ app.post('/api/pay/unified', (req, res) => {
     // ✅ STRENGTHENED NORMALIZATION
     // This ensures that no matter what the frontend sends, the DB gets 'Mpesa'
     if (method.toLowerCase().includes('mpesa') || method.toLowerCase().includes('m-pesa')) {
-        method = 'Mpesa';
+        method = 'MPesa';
     }
 
     if (method === 'Complimentary') {
@@ -540,7 +540,7 @@ app.get('/api/reports/sales-summary', (req, res) => {
             // 🔥 NORMALIZED BREAKDOWN (IMPORTANT FIX)
             const payments = {
                 Cash: 0,
-                Mpesa: 0,
+                MPesa: 0,
                 Wallet: 0,
                 Complimentary: 0
             };
@@ -551,8 +551,8 @@ app.get('/api/reports/sales-summary', (req, res) => {
 
     if (method === 'Cash') {
         payments.Cash += amount;
-    } else if (method === 'Mpesa' || method === 'M-Pesa') { // ✅ Added check for both
-        payments.Mpesa += amount;
+    } else if (method === 'MPesa' || method === 'Mpesa' || method === 'M-Pesa') { // ✅ Added check for both
+        payments.MPesa += amount;
     } else if (method === 'Advance') {
         payments.Wallet += amount;
     } else if (method === 'Complimentary') {
