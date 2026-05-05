@@ -841,15 +841,24 @@ app.get('/api/inventory/audit-report', (req, res) => {
         const groupedAudit = {};
 
         results.forEach(row => {
-           if (!groupedAudit[row.item_name].soldMap) {
-    groupedAudit[row.item_name].soldMap = {};
-}
+    if (!row.item_name) return;
 
-if (row.menu_item_name && row.total_sold > 0) {
-    groupedAudit[row.item_name].soldMap[row.menu_item_name] = row.total_sold;
-}
-            
-        });
+    // 1. Ensure parent object exists
+    if (!groupedAudit[row.item_name]) {
+        groupedAudit[row.item_name] = {
+            name: row.item_name,
+            unit: row.unit_measure,
+            totalStartStore: row.stock_quantity,
+            soldMap: {}
+        };
+    }
+
+    // 2. Only add sales if valid
+    if (row.menu_item_name && row.total_sold > 0) {
+        groupedAudit[row.item_name].soldMap[row.menu_item_name] =
+            (groupedAudit[row.item_name].soldMap[row.menu_item_name] || 0) + Number(row.total_sold);
+    }
+});
         
         app.get('/api/reports/customer-usage-timeline/:id', (req, res) => {
     const customerId = req.params.id;
