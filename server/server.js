@@ -40,13 +40,13 @@ const expandComboForReports = async (items) => {
     return new Promise((resolve, reject) => {
 
         // 1. Fetch ALL menu prices first
-        db.query("SELECT item_name, price FROM menu_items", (err, menu) => {
+       db.query("SELECT product_name, price FROM menu_items", (err, menu) => {
             if (err) return reject(err);
 
             // Create price map
             const priceMap = {};
             menu.forEach(m => {
-                priceMap[m.item_name.toLowerCase()] = Number(m.price);
+                priceMap[m.product_name.toLowerCase()] = Number(m.price);
             });
 
             const expanded = [];
