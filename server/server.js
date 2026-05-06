@@ -8,6 +8,81 @@ let cookedStock = {};
 
 // ✅ FIX: Split combo meals like "Chapati Beans" into individual items
 const splitComboItems = (items) => {
+    // ✅ FIX: Split combo meals like "Chapati Beans" into individual items
+const splitComboItems = (items) => {
+    const expanded = [];
+
+    items.forEach(item => {
+        const name = item.product_name.toLowerCase();
+
+        if (name.includes("chapati beans")) {
+            expanded.push(
+                { product_name: "Chapati", qty: item.qty * 2, price: 0 },
+                { product_name: "Beans", qty: item.qty, price: 0 }
+            );
+        }
+        else if (name.includes("chapati ndengu")) {
+            expanded.push(
+                { product_name: "Chapati", qty: item.qty * 2, price: 0 },
+                { product_name: "Ndengu", qty: item.qty, price: 0 }
+            );
+        }
+        else {
+            expanded.push(item);
+        }
+    });
+
+    return expanded;
+};
+
+
+
+// ✅ ✅ ADD STEP 1 RIGHT HERE (BELOW)
+
+// ✅ REPORT SPLITTER (FOR SALES DISPLAY)
+const expandComboForReports = (items) => {
+    const expanded = [];
+
+    items.forEach(item => {
+        const name = item.product_name.toLowerCase();
+
+        if (name.includes("chapati beans")) {
+            expanded.push({
+                product_name: "Chapati",
+                total_qty: item.total_qty * 2,
+                price: item.price,
+                total_revenue: item.total_revenue
+            });
+
+            expanded.push({
+                product_name: "Beans",
+                total_qty: item.total_qty,
+                price: 0,
+                total_revenue: 0
+            });
+        }
+        else if (name.includes("chapati ndengu")) {
+            expanded.push({
+                product_name: "Chapati",
+                total_qty: item.total_qty * 2,
+                price: item.price,
+                total_revenue: item.total_revenue
+            });
+
+            expanded.push({
+                product_name: "Ndengu",
+                total_qty: item.total_qty,
+                price: 0,
+                total_revenue: 0
+            });
+        }
+        else {
+            expanded.push(item);
+        }
+    });
+
+    return expanded;
+};
     const expanded = [];
 
     items.forEach(item => {
@@ -594,11 +669,13 @@ app.get('/api/reports/sales-summary', (req, res) => {
 FROM sales_items si
 JOIN sales s ON si.sale_id = s.id
 WHERE DATE(s.sale_date) = ?
-GROUP BY si.id
+GROUP BY si.product_name
 ORDER BY total_qty DESC
     `;
 
     db.query(itemizedSql, [selectedDate], (err, itemResults) => {
+        // 🔥 APPLY COMBO EXPANSION
+const expandedItems = expandComboForReports(itemResults);
         if (err) return res.status(500).json(err);
 
         const paymentSql = `
@@ -648,7 +725,7 @@ const normalize = (name) => name.trim().toLowerCase();
 // 🔥 SMART GROUPING MAP
 const grouped = {};
 
-itemResults.forEach(item => {
+expandedItems.forEach(item => {
     const key = item.product_name;
 
     if (!grouped[key]) {
