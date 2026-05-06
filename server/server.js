@@ -36,48 +36,76 @@ const splitComboItems = (items) => {
 
 
 // ✅ EXPAND COMBO FOR REPORTS (FOR SALES SUMMARY UI)
-const expandComboForReports = (items) => {
-    const expanded = [];
+const expandComboForReports = async (items) => {
+    return new Promise((resolve, reject) => {
 
-    items.forEach(item => {
-        const name = item.product_name.toLowerCase();
+        // 1. Fetch ALL menu prices first
+        db.query("SELECT item_name, price FROM menu_items", (err, menu) => {
+            if (err) return reject(err);
 
-        if (name.includes("chapati beans")) {
-            expanded.push({
-                product_name: "Chapati",
-                total_qty: item.total_qty * 2,
-                price: item.price,
-                total_revenue: item.total_revenue
+            // Create price map
+            const priceMap = {};
+            menu.forEach(m => {
+                priceMap[m.item_name.toLowerCase()] = Number(m.price);
             });
 
-            expanded.push({
-                product_name: "Beans",
-                total_qty: item.total_qty,
-                price: 0,
-                total_revenue: 0
-            });
-        }
-        else if (name.includes("chapati ndengu")) {
-            expanded.push({
-                product_name: "Chapati",
-                total_qty: item.total_qty * 2,
-                price: item.price,
-                total_revenue: item.total_revenue
+            const expanded = [];
+
+            items.forEach(item => {
+                const name = item.product_name.toLowerCase();
+                const qty = Number(item.total_qty || 0);
+
+                // ✅ CHAPATI BEANS
+                if (name.includes("chapati beans")) {
+
+                    const chapatiPrice = priceMap["chapati"] || 0;
+                    const beansPrice = priceMap["beans"] || 0;
+
+                    expanded.push({
+                        product_name: "Chapati",
+                        total_qty: qty * 2,
+                        price: chapatiPrice,
+                        total_revenue: chapatiPrice * (qty * 2)
+                    });
+
+                    expanded.push({
+                        product_name: "Beans",
+                        total_qty: qty,
+                        price: beansPrice,
+                        total_revenue: beansPrice * qty
+                    });
+                }
+
+                // ✅ CHAPATI NDENGU
+                else if (name.includes("chapati ndengu")) {
+
+                    const chapatiPrice = priceMap["chapati"] || 0;
+                    const ndenguPrice = priceMap["ndengu"] || 0;
+
+                    expanded.push({
+                        product_name: "Chapati",
+                        total_qty: qty * 2,
+                        price: chapatiPrice,
+                        total_revenue: chapatiPrice * (qty * 2)
+                    });
+
+                    expanded.push({
+                        product_name: "Ndengu",
+                        total_qty: qty,
+                        price: ndenguPrice,
+                        total_revenue: ndenguPrice * qty
+                    });
+                }
+
+                // ✅ NORMAL ITEMS
+                else {
+                    expanded.push(item);
+                }
             });
 
-            expanded.push({
-                product_name: "Ndengu",
-                total_qty: item.total_qty,
-                price: 0,
-                total_revenue: 0
-            });
-        }
-        else {
-            expanded.push(item);
-        }
+            resolve(expanded);
+        });
     });
-
-    return expanded;
 };
 
 const app = express();
@@ -627,7 +655,7 @@ deductStockWithYield(cleanedCallbackItems, 'Mpesa Sale (Callback)');
 // 5. SALES REPORT
 // 5. SALES REPORT
 
-app.get('/api/reports/sales-summary', (req, res) => {
+app.get('/api/reports/sales-summary', async (req, res) => {
     const { date } = req.query;
     const selectedDate = date || getLocalDate();
 
@@ -646,7 +674,7 @@ ORDER BY total_qty DESC
 
     db.query(itemizedSql, [selectedDate], (err, itemResults) => {
         // 🔥 APPLY COMBO EXPANSION
-const expandedItems = expandComboForReports(itemResults);
+const expandedItems = await expandComboForReports(itemResults);
         if (err) return res.status(500).json(err);
 
         const paymentSql = `
@@ -710,6 +738,11 @@ expandedItems.forEach(item => {
 
     grouped[key].total_qty += Number(item.total_qty || 0);
     grouped[key].total_revenue += Number(item.total_revenue || 0);
+
+    // ✅ recalculate correct unit price
+    if (grouped[key].total_qty > 0) {
+        grouped[key].price = grouped[key].total_revenue / grouped[key].total_qty;
+    }
 });
 
 res.json({

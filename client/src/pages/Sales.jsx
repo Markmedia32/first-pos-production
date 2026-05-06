@@ -87,28 +87,14 @@ const [rangeData, setRangeData] = useState(null);
     const grouped = {};
 
     reportData.forEach(item => {
-        // --- ADD THIS FILTER TO HIDE DEPOSITS FROM THE TABLE ---
-        if (item.payment_method === 'Topup' || item.product_name?.toLowerCase().includes('deposit')) {
-            return; // Skip this iteration, don't add to the table
-        }
 
-        const isWallet = item.payment_method === 'Advance';
-        const isCredit = item.payment_status === 'Unpaid' || item.payment_method === 'Credit';
-        const isComp = item.payment_method === 'Complimentary' || item.payment_status === 'Complimentary' || parseFloat(item.price) === 0;
-        
-        const statusKey = isComp ? 'comp' : (isCredit ? 'credit' : (isWallet ? 'advance' : 'normal'));
-        const personName = item.client_name || item.customer_name || 'Unknown';
-        
-        const groupKey = `${item.product_name}-${statusKey}-${statusKey === 'normal' ? 'standard' : personName}`;
+        const key = item.product_name;
 
-        if (grouped[groupKey]) {
-            grouped[groupKey].total_qty =
-  Number(grouped[groupKey].total_qty || 0) + Number(item.total_qty || 0);
-
-grouped[groupKey].total_revenue =
-  Number(grouped[groupKey].total_revenue || 0) + Number(item.total_revenue || 0);
+        if (!grouped[key]) {
+            grouped[key] = { ...item };
         } else {
-            grouped[groupKey] = { ...item, statusKey, personName };
+            grouped[key].total_qty += Number(item.total_qty || 0);
+            grouped[key].total_revenue += Number(item.total_revenue || 0);
         }
     });
 
