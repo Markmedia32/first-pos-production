@@ -37,16 +37,31 @@ const Receipts = () => {
     setLoading(false);
   };
 
-  const viewReceipt = async (id) => {
+ const viewReceipt = async (id) => {
+
   console.log("Fetching receipt:", id);
 
   try {
+
     const res = await axios.get(`${API_BASE_URL}/api/receipts/${id}`);
+
     console.log("RESPONSE:", res.data);
 
-    setSelectedReceipt(res.data);
+    if (res.data.success) {
+
+      setSelectedReceipt({
+        sale: res.data.sale,
+        items: res.data.items || []
+      });
+
+    } else {
+      alert("Receipt not found");
+    }
+
   } catch (err) {
+
     console.error("View receipt error:", err.response || err);
+
     alert("Failed to load receipt");
   }
 };
@@ -132,7 +147,10 @@ const Receipts = () => {
             <tbody>
               {receipts.map((r) => (
                 <tr key={r.id}>
-                  <td>{r.id}</td>
+                  <td>
+  {r.id}
+  {console.log("ROW:", r)}
+</td>
                   <td>{r.client_name}</td>
                   <td>{r.total_price}</td>
                   <td>{r.payment_method}</td>

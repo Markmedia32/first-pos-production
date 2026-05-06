@@ -736,31 +736,68 @@ app.get('/api/receipts', (req, res) => {
     });
 });
 // GET SINGLE RECEIPT DETAILS
+// ================= SINGLE RECEIPT =================
 app.get('/api/receipts/:id', (req, res) => {
 
     const receiptId = req.params.id;
 
+    console.log("RECEIPT REQUEST:", receiptId);
+
+    // 1. GET SALE
     const saleSql = `
-        SELECT * FROM sales WHERE id = ?
+        SELECT *
+        FROM sales
+        WHERE id = ?
+        LIMIT 1
     `;
 
-    const itemsSql = `
-        SELECT product_name, qty, price
-        FROM sales_items
-        WHERE sale_id = ?
-    `;
+    db.query(saleSql, [receiptId], (saleErr, saleResult) => {
 
-    db.query(saleSql, [receiptId], (err, saleResult) => {
-        if (err || saleResult.length === 0) {
-            return res.status(500).json({ error: "Receipt not found" });
+        if (saleErr) {
+            console.error("SALE QUERY ERROR:", saleErr);
+            return res.status(500).json({
+                success: false,
+                error: saleErr.message
+            });
         }
 
-        db.query(itemsSql, [receiptId], (err2, itemsResult) => {
-            if (err2) return res.status(500).json(err2);
+        if (!saleResult || saleResult.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: "Receipt not found"
+            });
+        }
+
+        // 2. GET ITEMS
+        const itemsSql = `
+            SELECT 
+                id,
+                sale_id,
+                product_name,
+                qty,
+                price
+            FROM sales_items
+            WHERE sale_id = ?
+        `;
+
+        db.query(itemsSql, [receiptId], (itemsErr, itemsResult) => {
+
+            if (itemsErr) {
+                console.error("ITEM QUERY ERROR:", itemsErr);
+
+                return res.status(500).json({
+                    success: false,
+                    error: itemsErr.message
+                });
+            }
+
+            console.log("SALE:", saleResult[0]);
+            console.log("ITEMS:", itemsResult);
 
             res.json({
+                success: true,
                 sale: saleResult[0],
-                items: itemsResult
+                items: itemsResult || []
             });
         });
     });
