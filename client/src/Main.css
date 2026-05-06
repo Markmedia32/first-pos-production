@@ -1272,7 +1272,7 @@ html, body {
 }
 
 .btn-primary:hover {
-    background: #005bb5;
+    background: #000;
     transform: translateY(-1px);
 }
 
@@ -1334,7 +1334,8 @@ td button:hover {
 }
 
 .edit-test-btn:hover {
-    background: #c8890c;
+    background: #f0f0f0;
+    color: #000;
 }
 
 /* Audit/Reconciliation Cards */
@@ -1469,7 +1470,8 @@ td button:hover {
 }
 
 .btn-primary:hover {
-    background-color: #005bbd;
+    background-color: #e8e8e8;
+    color: #000;
 }
 
 .btn-outline {
