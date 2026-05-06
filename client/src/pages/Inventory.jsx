@@ -259,10 +259,10 @@ const saveEdit = async () => {
                                             </button>
                                         )}
                                     </td>
-                                    <td style={{ background: "yellow" }}>
-    <button onClick={() => openEdit(item)}>
-        EDIT TEST
-    </button>
+                                    <td>
+    <button className="edit-test-btn" onClick={() => openEdit(item)}>
+    EDIT TEST
+</button>
 </td>
                                 </tr>
                             );
