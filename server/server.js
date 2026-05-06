@@ -471,7 +471,8 @@ app.post('/api/pay/cash', (req, res) => {
 // --- UNIFIED POS PAYMENT (Cash, Credit, Advance, Comp, Mpesa) ---
 app.post('/api/pay/unified', (req, res) => {
     const { clientName, amount, items, paymentMethod, customerId } = req.body;
-    const cleanedItems = splitComboItems(items);
+    const stockItems = splitComboItems(items); // ONLY for stock
+    const cleanedItems = items; // ORIGINAL for sales
     
     let method = paymentMethod;
     let finalPrice = amount;
@@ -517,9 +518,9 @@ app.post('/api/pay/unified', (req, res) => {
             let reason = (method === 'Complimentary') ? 'Staff/Owner Meal' : `Sale (${method})`;
             paymentStatus = 'Completed';
             // ALWAYS deduct stock for ALL completed sales
-if (cleanedItems && cleanedItems.length > 0) {
-    cookItems(cleanedItems);
-    deductStockWithYield(cleanedItems, `Sale (${method})`);
+if (stockItems && stockItems.length > 0) {
+    cookItems(stockItems);
+    deductStockWithYield(stockItems, `Sale (${method})`);
 }
 
             res.json({ success: true, saleId });
