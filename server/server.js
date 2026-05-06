@@ -549,7 +549,15 @@ app.get('/api/reports/sales-summary', (req, res) => {
     const selectedDate = date || getLocalDate();
 
     const itemizedSql = `
-      
+        SELECT 
+  product_name, 
+  SUM(qty) as total_qty, 
+  MAX(price) as price, 
+  SUM(qty * price) as total_revenue
+FROM sales_items si
+JOIN sales s ON si.sale_id = s.id
+WHERE DATE(s.sale_date) = ?
+GROUP BY product_name, s.payment_method, s.payment_status, s.client_name
 ORDER BY total_qty DESC
     `;
 
