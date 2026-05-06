@@ -927,6 +927,41 @@ app.get('/api/inventory', (req, res) => {
         res.json(inventoryWithCalculations);
     });
 });
+
+// ✏️ EDIT INVENTORY ITEM (ADMIN FIX MISTAKES)
+app.put('/api/inventory/update-item', (req, res) => {
+
+    // 🔐 ADMIN CHECK (ADD THIS FIRST)
+    if (req.headers['user-role'] !== 'Admin') {
+        return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
+    const { id, item_name, unit_measure, stock_quantity, opening_stock, added_stock } = req.body;
+
+    const sql = `
+        UPDATE inventory 
+        SET item_name = ?, 
+            unit_measure = ?, 
+            stock_quantity = ?, 
+            opening_stock = ?, 
+            added_stock = ?
+        WHERE id = ?
+    `;
+
+    db.query(
+        sql,
+        [item_name, unit_measure, stock_quantity, opening_stock, added_stock, id],
+        (err, result) => {
+            if (err) {
+                console.error("Inventory update error:", err);
+                return res.status(500).json({ success: false, error: err });
+            }
+
+            res.json({ success: true, message: "Inventory item updated successfully" });
+        }
+    );
+});
+
 app.post('/api/inventory/add-stock', (req, res) => {
     const { item_id, quantity_to_add } = req.body;
     const sql = "UPDATE inventory SET stock_quantity = stock_quantity + ?, added_stock = added_stock + ? WHERE id = ?";

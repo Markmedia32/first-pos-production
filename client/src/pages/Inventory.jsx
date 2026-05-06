@@ -12,6 +12,25 @@ const Inventory = () => {
     // Form States
     const [newItem, setNewItem] = useState({ item_name: '', unit_measure: '', stock_quantity: 0 });
     const [updateAmount, setUpdateAmount] = useState({ id: null, val: '' });
+    const [editItem, setEditItem] = useState(null);
+const [editForm, setEditForm] = useState({
+    id: null,
+    item_name: '',
+    unit_measure: '',
+    stock_quantity: 0,
+    opening_stock: 0,
+    added_stock: 0
+});
+
+const saveEdit = async () => {
+    try {
+        await axios.put(`${API}/api/inventory/update-item`, editForm);
+        setEditItem(null);
+        loadData();
+    } catch (err) {
+        alert("Failed to update item");
+    }
+};
 
     // Calculate the current week range for display (Sunday to Saturday)
     const getWeekRange = () => {
@@ -92,7 +111,19 @@ return {
             setUpdateAmount({ id: null, val: '' });
             loadData();
         } catch (err) { alert("Update failed"); }
-    };
+    }; 
+
+    const openEdit = (item) => {
+    setEditItem(item.id);
+    setEditForm({
+        id: item.id,
+        item_name: item.item_name,
+        unit_measure: item.unit_measure,
+        stock_quantity: item.stock_quantity,
+        opening_stock: item.opening_stock,
+        added_stock: item.added_stock
+    });
+};
 
     return (
         <div className="inventory-page" style={{ padding: '20px' }}>
@@ -212,6 +243,9 @@ return {
                                             {isMismatched ? 'Check Usage' : isLow ? 'Low Stock' : 'Optimal'}
                                         </span>
                                     </td>
+                                    <button className="btn-outline" onClick={() => openEdit(item)}>
+    <Edit size={14} /> Edit
+</button>
                                     <td>
                                         {updateAmount.id === item.id ? (
                                             <div style={{ display: 'flex', gap: '5px' }}>
@@ -274,7 +308,57 @@ return {
                         </form>
                     </div>
                 </div>
-            )}
+            )} 
+
+            {editItem && (
+    <div className="modal-overlay">
+        <div className="modal-content">
+            <h3>Edit Inventory Item</h3>
+
+            <label>Item Name</label>
+            <input
+                value={editForm.item_name}
+                onChange={(e) => setEditForm({ ...editForm, item_name: e.target.value })}
+            />
+
+            <label>Unit Measure</label>
+            <input
+                value={editForm.unit_measure}
+                onChange={(e) => setEditForm({ ...editForm, unit_measure: e.target.value })}
+            />
+
+            <label>Stock Quantity</label>
+            <input
+                type="number"
+                value={editForm.stock_quantity}
+                onChange={(e) => setEditForm({ ...editForm, stock_quantity: e.target.value })}
+            />
+
+            <label>Opening Stock</label>
+            <input
+                type="number"
+                value={editForm.opening_stock}
+                onChange={(e) => setEditForm({ ...editForm, opening_stock: e.target.value })}
+            />
+
+            <label>Added Stock</label>
+            <input
+                type="number"
+                value={editForm.added_stock}
+                onChange={(e) => setEditForm({ ...editForm, added_stock: e.target.value })}
+            />
+
+            <div className="modal-actions">
+                <button className="btn-primary" onClick={saveEdit}>
+                    Save Changes
+                </button>
+                <button className="btn-outline" onClick={() => setEditItem(null)}>
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+)}
 
             <footer className="inventory-footer">
                 <span className="branding-tag">Property Flow POS • Codey Craft Africa</span>
