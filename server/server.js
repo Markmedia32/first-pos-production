@@ -15,17 +15,17 @@ const splitComboItems = (items) => {
 
         // If it's a combo meal, split it
         if (name.includes("chapati beans")) {
-            expanded.push(
-                { product_name: "Chapati", qty: item.qty, price: 0 },
-                { product_name: "Beans", qty: item.qty, price: 0 }
-            );
-        } 
+    expanded.push(
+        { product_name: "Chapati", qty: item.qty * 2, price: 0 },
+        { product_name: "Beans", qty: item.qty, price: 0 }
+    );
+}
         else if (name.includes("chapati ndengu")) {
-            expanded.push(
-                { product_name: "Chapati", qty: item.qty, price: 0 },
-                { product_name: "Ndengu", qty: item.qty, price: 0 }
-            );
-        }
+    expanded.push(
+        { product_name: "Chapati", qty: item.qty * 2, price: 0 },
+        { product_name: "Ndengu", qty: item.qty, price: 0 }
+    );
+}
         else {
             expanded.push(item);
         }
