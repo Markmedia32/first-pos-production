@@ -672,7 +672,7 @@ GROUP BY si.product_name
 ORDER BY total_qty DESC
     `;
 
-    db.query(itemizedSql, [selectedDate], (err, itemResults) => {
+    db.query(itemizedSql, [selectedDate], async (err, itemResults) => {
         // 🔥 APPLY COMBO EXPANSION
 const expandedItems = await expandComboForReports(itemResults);
         if (err) return res.status(500).json(err);
