@@ -25,7 +25,13 @@ const splitComboItems = (items) => {
                 { product_name: "Chapati", qty: item.qty * 2, price: 0 },
                 { product_name: "Ndengu", qty: item.qty, price: 0 }
             );
-        }
+        } 
+        else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
+    expanded.push(
+        { product_name: "Rice", qty: item.qty, price: 0 },
+        { product_name: "Ndengu", qty: item.qty, price: 0 }
+    );
+}
         else {
             expanded.push(item);
         }
@@ -96,6 +102,26 @@ const expandComboForReports = async (items) => {
                         total_revenue: ndenguPrice * qty
                     });
                 }
+else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
+
+    const ricePrice = priceMap["rice"] || 0;
+    const ndenguPrice = priceMap["ndengu"] || 0;
+
+    expanded.push({
+        product_name: "Rice",
+        total_qty: qty,
+        price: ricePrice,
+        total_revenue: ricePrice * qty
+    });
+
+    expanded.push({
+        product_name: "Ndengu",
+        total_qty: qty,
+        price: ndenguPrice,
+        total_revenue: ndenguPrice * qty
+    });
+}
+                
 
                 // ✅ NORMAL ITEMS
                 else {
