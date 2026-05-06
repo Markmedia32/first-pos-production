@@ -38,9 +38,20 @@ const Receipts = () => {
   };
 
   const viewReceipt = async (id) => {
+  try {
     const res = await axios.get(`${API_BASE_URL}/api/receipts/${id}`);
-    setSelectedReceipt(res.data);
-  };
+
+    if (res.data) {
+      setSelectedReceipt(null); // reset first to force re-render
+      setTimeout(() => {
+        setSelectedReceipt(res.data);
+      }, 50);
+    }
+  } catch (err) {
+    console.error("View receipt error:", err);
+    alert("Failed to load receipt");
+  }
+};
 
   const printReceipt = () => {
     const content = document.getElementById("receipt-box").innerHTML;
@@ -147,7 +158,7 @@ const Receipts = () => {
 
             <div className="line"></div>
 
-            <p><b>Receipt #:</b> {selectedReceipt.sale.id}</p>
+            <p><b>Receipt #:</b> {selectedReceipt.sale?.id}</p>
             <p><b>Customer:</b> {selectedReceipt.sale.client_name}</p>
             <p><b>Method:</b> {selectedReceipt.sale.payment_method}</p>
             <p><b>Date:</b> {new Date(selectedReceipt.sale.sale_date).toLocaleString()}</p>
@@ -156,7 +167,7 @@ const Receipts = () => {
 
             <table className="receipt-items">
               <tbody>
-                {selectedReceipt.items.map((item, i) => (
+                {(selectedReceipt.items || []).map((item, i) => (
                   <tr key={i}>
                     <td>{item.product_name}</td>
                     <td>x{item.qty}</td>
