@@ -571,7 +571,7 @@ app.post('/api/pay/cash', (req, res) => {
 // --- UNIFIED POS PAYMENT (Cash, Credit, Advance, Comp, Mpesa) ---
 app.post('/api/pay/unified', (req, res) => {
     const { clientName, amount, items, paymentMethod, customerId } = req.body;
-    const stockItems = splitComboItems(items); // ONLY for stock
+    const stockItems = splitComboItems(items || []); // ONLY for stock
     const cleanedItems = items; // ORIGINAL for sales
     
     let method = paymentMethod;
@@ -597,7 +597,7 @@ app.post('/api/pay/unified', (req, res) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
 
         const saleId = result.insertId;
-        const itemValues = cleanedItems.map(item => [
+        const itemValues = (cleanedItems || []).map(item => [
     saleId,
     item.product_name,
     item.qty,
