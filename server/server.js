@@ -597,12 +597,17 @@ app.post('/api/pay/unified', (req, res) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
 
         const saleId = result.insertId;
-        const itemValues = (cleanedItems || []).map(item => [
-    saleId,
-    item.product_name,
-    item.qty,
-    item.price
-]);
+        
+    const itemValues = Array.isArray(cleanedItems)
+    ? cleanedItems
+        .filter(i => i && i.product_name)
+        .map(item => [
+            saleId,
+            item.product_name,
+            item.qty || 0,
+            item.price || 0
+        ])
+    : [];
         const itemSql = `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`;
 
         db.query(itemSql, [itemValues], (itemErr) => {
@@ -611,6 +616,12 @@ app.post('/api/pay/unified', (req, res) => {
             if (method === 'Advance' && customerId) {
                 db.query("UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?", [amount, customerId]);
             }
+            if (!customerId && method === 'Credit') {
+    return res.status(400).json({
+        success: false,
+        error: "Customer required for credit"
+    });
+}
             if (method === 'Credit' && customerId) {
                 db.query("UPDATE customers SET credit_balance = credit_balance + ? WHERE customer_id = ?", [amount, customerId]);
             }
