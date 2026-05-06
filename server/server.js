@@ -648,43 +648,19 @@ const normalize = (name) => name.trim().toLowerCase();
 const grouped = {};
 
 itemResults.forEach(item => {
-    const rawName = item.product_name || '';
-    
-    // Split ONLY if clearly combined (space-based combo like "Chapati Beans")
-    const parts = rawName.split(' ').filter(Boolean);
+    const key = item.product_name;
 
-    // If it looks like a combo (2 known words), split it
-    if (parts.length > 1) {
-        parts.forEach(part => {
-            const key = normalize(part);
-
-            if (!grouped[key]) {
-                grouped[key] = {
-                    product_name: part,
-                    total_qty: 0,
-                    total_revenue: 0,
-                    price: item.price
-                };
-            }
-
-            grouped[key].total_qty += Number(item.total_qty) / parts.length;
-            grouped[key].total_revenue += Number(item.total_revenue) / parts.length;
-        });
-    } else {
-        const key = normalize(rawName);
-
-        if (!grouped[key]) {
-            grouped[key] = {
-                product_name: rawName,
-                total_qty: 0,
-                total_revenue: 0,
-                price: item.price
-            };
-        }
-
-        grouped[key].total_qty += Number(item.total_qty);
-        grouped[key].total_revenue += Number(item.total_revenue);
+    if (!grouped[key]) {
+        grouped[key] = {
+            product_name: item.product_name,
+            total_qty: 0,
+            total_revenue: 0,
+            price: item.price
+        };
     }
+
+    grouped[key].total_qty += Number(item.total_qty || 0);
+    grouped[key].total_revenue += Number(item.total_revenue || 0);
 });
 
 res.json({
