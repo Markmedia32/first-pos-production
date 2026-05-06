@@ -572,9 +572,9 @@ app.post('/api/pay/cash', (req, res) => {
 app.post('/api/pay/unified', (req, res) => {
     const { clientName, amount, items, paymentMethod, customerId } = req.body;
     const stockItems = splitComboItems(items || []); // ONLY for stock
-    const cleanedItems = items; // ORIGINAL for sales
+    const cleanedItems = Array.isArray(items) ? items : []; // ORIGINAL for sales
     
-    let method = paymentMethod;
+    let method = paymentMethod || "";
     let finalPrice = amount;
     let paymentStatus = 'Completed'; 
 

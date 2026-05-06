@@ -92,7 +92,14 @@ const Pos = () => {
   };
 
  const handlePayment = async (method) => {
+  
   if (cart.length === 0) return alert("Cart is empty");
+
+  // ✅ ADD IT RIGHT HERE 👇
+  if (method === "Credit" && !selectedCustomer) {
+    alert("Please select a customer for credit");
+    return;
+  }
 
   setLoading(true);
 
@@ -105,12 +112,10 @@ const Pos = () => {
       amount: method === 'Complimentary' ? 0 : total,
       clientName: finalClientName,
       items: cart,
-      // Ensure we send 'Mpesa' so the server report logic picks it up
       paymentMethod: method, 
       customerId: selectedCustomer?.customer_id || null,
     };
 
-    // This calls the same "instant" route as Cash
     await axios.post(`${API_BASE_URL}/api/pay/unified`, payload);
 
     setActiveOrder({ 
@@ -125,7 +130,8 @@ const Pos = () => {
     setLoading(false);
 
   } catch (err) {
-    alert(`${method} payment failed. Check server.`);
+    console.error(err.response?.data); // ✅ ADD THIS TOO
+    alert(err.response?.data?.error || `${method} payment failed.`);
     setLoading(false);
   }
 };
