@@ -38,17 +38,15 @@ const Receipts = () => {
   };
 
   const viewReceipt = async (id) => {
+  console.log("Fetching receipt:", id);
+
   try {
     const res = await axios.get(`${API_BASE_URL}/api/receipts/${id}`);
+    console.log("RESPONSE:", res.data);
 
-    if (res.data) {
-      setSelectedReceipt(null); // reset first to force re-render
-      setTimeout(() => {
-        setSelectedReceipt(res.data);
-      }, 50);
-    }
+    setSelectedReceipt(res.data);
   } catch (err) {
-    console.error("View receipt error:", err);
+    console.error("View receipt error:", err.response || err);
     alert("Failed to load receipt");
   }
 };
@@ -133,11 +131,14 @@ const Receipts = () => {
                   <td>{new Date(r.sale_date).toLocaleString()}</td>
                   <td>
                     <button
-                      className="view-btn"
-                      onClick={() => viewReceipt(r.id)}
-                    >
-                      View
-                    </button>
+  className="view-btn"
+  onClick={() => {
+    console.log("CLICKED:", r.id);
+    viewReceipt(r.id);
+  }}
+>
+  View
+</button>
                   </td>
                 </tr>
               ))}
@@ -159,9 +160,9 @@ const Receipts = () => {
             <div className="line"></div>
 
             <p><b>Receipt #:</b> {selectedReceipt.sale?.id}</p>
-            <p><b>Customer:</b> {selectedReceipt.sale.client_name}</p>
-            <p><b>Method:</b> {selectedReceipt.sale.payment_method}</p>
-            <p><b>Date:</b> {new Date(selectedReceipt.sale.sale_date).toLocaleString()}</p>
+            <p><b>Customer:</b> {selectedReceipt.sale?.client_name}</p>
+            <p><b>Method:</b> {selectedReceipt.sale?.payment_method}</p>
+            <p><b>Date:</b> {selectedReceipt.sale?.sale_date && new Date(selectedReceipt.sale.sale_date).toLocaleString()}</p>
 
             <div className="line"></div>
 
@@ -179,7 +180,7 @@ const Receipts = () => {
 
             <div className="line"></div>
 
-            <h3>Total: {selectedReceipt.sale.total_price}</h3>
+            <h3>Total: {selectedReceipt.sale?.total_price}</h3>
 
             <p className="center">Thank you 🙏</p>
           </div>
