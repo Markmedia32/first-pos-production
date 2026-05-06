@@ -7,8 +7,7 @@ require('dotenv').config();
 let cookedStock = {};
 
 // ✅ FIX: Split combo meals like "Chapati Beans" into individual items
-const splitComboItems = (items) => {
-    // ✅ FIX: Split combo meals like "Chapati Beans" into individual items
+// ✅ SPLIT COMBO ITEMS (FOR STOCK LOGIC)
 const splitComboItems = (items) => {
     const expanded = [];
 
@@ -36,10 +35,7 @@ const splitComboItems = (items) => {
 };
 
 
-
-// ✅ ✅ ADD STEP 1 RIGHT HERE (BELOW)
-
-// ✅ REPORT SPLITTER (FOR SALES DISPLAY)
+// ✅ EXPAND COMBO FOR REPORTS (FOR SALES SUMMARY UI)
 const expandComboForReports = (items) => {
     const expanded = [];
 
@@ -76,31 +72,6 @@ const expandComboForReports = (items) => {
                 total_revenue: 0
             });
         }
-        else {
-            expanded.push(item);
-        }
-    });
-
-    return expanded;
-};
-    const expanded = [];
-
-    items.forEach(item => {
-        const name = item.product_name.toLowerCase();
-
-        // If it's a combo meal, split it
-        if (name.includes("chapati beans")) {
-    expanded.push(
-        { product_name: "Chapati", qty: item.qty * 2, price: 0 },
-        { product_name: "Beans", qty: item.qty, price: 0 }
-    );
-}
-        else if (name.includes("chapati ndengu")) {
-    expanded.push(
-        { product_name: "Chapati", qty: item.qty * 2, price: 0 },
-        { product_name: "Ndengu", qty: item.qty, price: 0 }
-    );
-}
         else {
             expanded.push(item);
         }
