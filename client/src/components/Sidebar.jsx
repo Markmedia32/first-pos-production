@@ -11,6 +11,7 @@ const Sidebar = () => {
     { name: 'Inventory', path: '/inventory', icon: <Package size={20} /> },
     { name: 'Sales Reports', path: '/sales', icon: <BarChart3 size={20} /> },
     { name: 'Accounts Management', path: '/Accounts', icon: <ClipboardList size={20} /> },
+    { name: 'Receipts', path: '/Receipts', icon: <Paper size={20} /> },
     { name: 'System Settings', path: '/settings', icon: <Settings size={20} /> },
   ];
 

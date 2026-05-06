@@ -9,6 +9,7 @@ import Inventory from './pages/Inventory';
 import '../src/Main.css';
 import Settings from './pages/Settings';
 import Accounts from './pages/Accounts';
+import Receipts from './pages/Receipts';
 
 // --- Step 3: Authentication Guard Component ---
 const ProtectedRoute = ({ children }) => {
@@ -79,6 +80,10 @@ function App() {
           <Route 
             path="/Accounts" 
             element={<ProtectedRoute><Accounts /></ProtectedRoute>} 
+          />
+          <Route 
+            path="/Receipts" 
+            element={<ProtectedRoute><Receipts /></ProtectedRoute>} 
           />
           <Route 
             path="/settings" 

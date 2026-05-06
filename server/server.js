@@ -692,6 +692,80 @@ deductStockWithYield(cleanedCallbackItems, 'Mpesa Sale (Callback)');
 // 5. SALES REPORT
 // 5. SALES REPORT
 
+// ================= 🧾 RECEIPTS MODULE =================
+
+// GET ALL RECEIPTS (WITH FILTERS)
+app.get('/api/receipts', (req, res) => {
+
+    const { search, from, to } = req.query;
+
+    let sql = `
+        SELECT 
+            s.id,
+            s.client_name,
+            s.total_price,
+            s.payment_method,
+            s.payment_status,
+            s.sale_date
+        FROM sales s
+        WHERE 1=1
+    `;
+
+    const params = [];
+
+    // 🔍 SEARCH BY CUSTOMER NAME
+    if (search) {
+        sql += " AND s.client_name LIKE ?";
+        params.push(`%${search}%`);
+    }
+
+    // 📅 DATE FILTER
+    if (from && to) {
+        sql += " AND DATE(s.sale_date) BETWEEN ? AND ?";
+        params.push(from, to);
+    }
+
+    sql += " ORDER BY s.sale_date DESC";
+
+    db.query(sql, params, (err, results) => {
+        if (err) {
+            console.error("Receipts error:", err);
+            return res.status(500).json(err);
+        }
+        res.json(results);
+    });
+});
+// GET SINGLE RECEIPT DETAILS
+app.get('/api/receipts/:id', (req, res) => {
+
+    const receiptId = req.params.id;
+
+    const saleSql = `
+        SELECT * FROM sales WHERE id = ?
+    `;
+
+    const itemsSql = `
+        SELECT product_name, qty, price
+        FROM sales_items
+        WHERE sale_id = ?
+    `;
+
+    db.query(saleSql, [receiptId], (err, saleResult) => {
+        if (err || saleResult.length === 0) {
+            return res.status(500).json({ error: "Receipt not found" });
+        }
+
+        db.query(itemsSql, [receiptId], (err2, itemsResult) => {
+            if (err2) return res.status(500).json(err2);
+
+            res.json({
+                sale: saleResult[0],
+                items: itemsResult
+            });
+        });
+    });
+});
+
 app.get('/api/reports/sales-summary', async (req, res) => {
     const { date } = req.query;
     const selectedDate = date || getLocalDate();
