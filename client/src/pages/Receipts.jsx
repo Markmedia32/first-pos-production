@@ -52,23 +52,31 @@ const Receipts = () => {
 };
 
   const printReceipt = () => {
-    const content = document.getElementById("receipt-box").innerHTML;
-    const win = window.open("", "", "width=350,height=600");
+  const printContent = document.getElementById("receipt-box");
 
-    win.document.write(`
-      <html>
-        <head>
-          <title>Receipt</title>
-          <link rel="stylesheet" href="/main.css" />
-        </head>
-        <body onload="window.print()">
-          ${content}
-        </body>
-      </html>
-    `);
+  if (!printContent) return;
 
-    win.document.close();
-  };
+  const win = window.open("", "", "width=350,height=600");
+
+  win.document.write(`
+    <html>
+      <head>
+        <title>Receipt</title>
+        <style>
+          body { font-family: monospace; padding: 10px; }
+          .center { text-align: center; }
+          .line { border-top: 1px dashed #000; margin: 10px 0; }
+          table { width: 100%; }
+        </style>
+      </head>
+      <body onload="window.print(); window.close();">
+        ${printContent.outerHTML}
+      </body>
+    </html>
+  `);
+
+  win.document.close();
+};
 
   return (
     <div className="receipts-container">

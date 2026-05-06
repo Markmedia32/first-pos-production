@@ -2773,3 +2773,44 @@ td button:hover {
   border: none;
   cursor: pointer;
 }
+.receipt-box {
+  width: 280px;
+  background: white;
+  padding: 10px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  border: 1px dashed #000;
+}
+
+.center {
+  text-align: center;
+}
+
+.right {
+  text-align: right;
+}
+
+.line {
+  border-top: 1px dashed #000;
+  margin: 10px 0;
+}
+
+.receipt-items {
+  width: 100%;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #receipt-box, #receipt-box * {
+    visibility: visible;
+  }
+
+  #receipt-box {
+    position: absolute;
+    left: 0;
+    top: 0;
+  }
+}
