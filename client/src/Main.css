@@ -1321,8 +1321,8 @@ td button:hover {
     color: #0071e3;
 }
 .edit-test-btn {
-    background: #ffcc00;
-    color: #000;
+    background: #a86814;
+    color: #ffffff;
 
     border: none;
     padding: 6px 10px;
@@ -1334,7 +1334,7 @@ td button:hover {
 }
 
 .edit-test-btn:hover {
-    background: #ffb700;
+    background: #c8890c;
 }
 
 /* Audit/Reconciliation Cards */
