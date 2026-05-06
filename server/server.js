@@ -544,91 +544,34 @@ if (finalStatus === 'Completed') {
 // 5. SALES REPORT
 // 5. SALES REPORT
 
-app.get('/api/reports/sales-summary', async (req, res) => {
+app.get('/api/reports/sales-summary', (req, res) => {
     const { date } = req.query;
     const selectedDate = date || getLocalDate();
 
     const itemizedSql = `
-        SELECT 
-            si.product_name,
-            SUM(si.qty) as total_qty,
-            MAX(si.price) as price,
-            SUM(si.qty * si.price) as total_revenue
-        FROM sales_items si
-        JOIN sales s ON si.sale_id = s.id
-        WHERE DATE(s.sale_date) = ?
-        GROUP BY si.product_name
+      
+ORDER BY total_qty DESC
     `;
 
-    db.query(itemizedSql, [selectedDate], async (err, itemResults) => {
+    db.query(itemizedSql, [selectedDate], (err, itemResults) => {
         if (err) return res.status(500).json(err);
 
-        const expanded = {};
-
-        for (const item of itemResults) {
-
-            const rules = await new Promise((resolve) => {
-                db.query(
-                    `SELECT material_name, yield_per_unit 
-                     FROM yield_rules 
-                     WHERE menu_item_name = ?`,
-                    [item.product_name],
-                    (err, results) => resolve(results || [])
-                );
-            });
-
-            const qty = Number(item.total_qty || 0);
-
-            // CASE 1: NORMAL ITEM (NOT COMBO)
-            if (rules.length === 0) {
-                if (!expanded[item.product_name]) {
-                    expanded[item.product_name] = {
-                        product_name: item.product_name,
-                        total_qty: 0,
-                        price: item.price,
-                        total_revenue: 0
-                    };
-                }
-
-                expanded[item.product_name].total_qty += qty;
-                expanded[item.product_name].total_revenue += item.total_revenue;
-            }
-
-            // CASE 2: COMBO ITEM (EXPAND IT)
-            else {
-                rules.forEach(rule => {
-
-                    const materialQty = qty * Number(rule.yield_per_unit);
-
-                    if (!expanded[rule.material_name]) {
-                        expanded[rule.material_name] = {
-                            product_name: rule.material_name,
-                            total_qty: 0,
-                            price: null,
-                            total_revenue: 0
-                        };
-                    }
-
-                    expanded[rule.material_name].total_qty += materialQty;
-                });
-            }
-        }
-
-        // FIX: PAYMENT QUERY (UNCHANGED)
         const paymentSql = `
-            SELECT 
-                s.payment_method,
-                SUM(si.qty * si.price) as total
-            FROM sales s
-            JOIN sales_items si ON s.id = si.sale_id
-            WHERE DATE(s.sale_date) = ?
-            AND s.payment_status != 'Pending'
-            GROUP BY s.payment_method
-        `;
+    SELECT 
+        s.payment_method,
+        SUM(si.qty * si.price) as total
+    FROM sales s
+    JOIN sales_items si ON s.id = si.sale_id
+    WHERE DATE(s.sale_date) = ?
+    AND s.payment_status != 'Pending'
+    AND s.payment_method != 'InternalAdjustment'
+    GROUP BY s.payment_method
+`;
 
         db.query(paymentSql, [selectedDate], (err2, payResults) => {
             if (err2) return res.status(500).json(err2);
 
+            // 🔥 NORMALIZED BREAKDOWN (IMPORTANT FIX)
             const payments = {
                 Cash: 0,
                 MPesa: 0,
@@ -638,18 +581,24 @@ app.get('/api/reports/sales-summary', async (req, res) => {
             };
 
             payResults.forEach(row => {
-                const method = row.payment_method;
-                const amount = Number(row.total || 0);
+    const method = row.payment_method;
+    const amount = parseFloat(row.total || 0);
 
-                if (method === 'Cash') payments.Cash += amount;
-                else if (method?.toLowerCase().includes('mpesa')) payments.MPesa += amount;
-                else if (method === 'Advance') payments.Wallet += amount;
-                else if (method === 'Complimentary') payments.Complimentary += amount;
-                else if (method === 'CreditCard') payments.CreditCard += amount;
-            });
+    if (method === 'Cash') {
+        payments.Cash += amount;
+    } else if (method === 'MPesa' || method === 'Mpesa' || method === 'M-Pesa') { // ✅ Added check for both
+        payments.MPesa += amount;
+    } else if (method === 'Advance') {
+        payments.Wallet += amount;
+    } else if (method === 'Complimentary') {
+        payments.Complimentary += amount;
+    } else if (method === 'CreditCard') {
+    payments.CreditCard += amount;
+}
+});
 
             res.json({
-                itemized: Object.values(expanded),
+                itemized: itemResults,
                 payments
             });
         });
