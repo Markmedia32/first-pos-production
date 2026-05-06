@@ -45,22 +45,16 @@ const Receipts = () => {
 
     const res = await axios.get(`${API_BASE_URL}/api/receipts/${id}`);
 
-    console.log("RESPONSE:", res.data);
+    console.log("FULL RESPONSE:", res.data);
 
-    if (res.data.success) {
-
-      setSelectedReceipt({
-        sale: res.data.sale,
-        items: res.data.items || []
-      });
-
-    } else {
-      alert("Receipt not found");
-    }
+    setSelectedReceipt({
+      sale: res.data.sale || {},
+      items: res.data.items || []
+    });
 
   } catch (err) {
 
-    console.error("View receipt error:", err.response || err);
+    console.error("View receipt error:", err);
 
     alert("Failed to load receipt");
   }
@@ -176,47 +170,27 @@ const Receipts = () => {
 
       {/* RECEIPT PREVIEW */}
       {selectedReceipt && (
-        <div className="receipt-section">
+  <div
+    style={{
+      background: "white",
+      border: "5px solid red",
+      padding: "20px",
+      marginTop: "20px",
+      color: "black",
+      zIndex: 9999
+    }}
+  >
+    <h1>RECEIPT IS WORKING</h1>
 
-          <div id="receipt-box" className="receipt-box">
+    <p>ID: {selectedReceipt.sale?.id}</p>
 
-            <h2 className="center">FIRST CLASS HOTEL</h2>
-            <p className="center">Official Receipt</p>
+    <p>Customer: {selectedReceipt.sale?.client_name}</p>
 
-            <div className="line"></div>
-
-            <p><b>Receipt #:</b> {selectedReceipt.sale?.id}</p>
-            <p><b>Customer:</b> {selectedReceipt.sale?.client_name}</p>
-            <p><b>Method:</b> {selectedReceipt.sale?.payment_method}</p>
-            <p><b>Date:</b> {selectedReceipt.sale?.sale_date && new Date(selectedReceipt.sale.sale_date).toLocaleString()}</p>
-
-            <div className="line"></div>
-
-            <table className="receipt-items">
-              <tbody>
-                {(selectedReceipt.items || []).map((item, i) => (
-                  <tr key={i}>
-                    <td>{item.product_name}</td>
-                    <td>x{item.qty}</td>
-                    <td className="right">{item.price}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <div className="line"></div>
-
-            <h3>Total: {selectedReceipt.sale?.total_price}</h3>
-
-            <p className="center">Thank you 🙏</p>
-          </div>
-
-          <button className="print-btn" onClick={printReceipt}>
-            Print Receipt
-          </button>
-
-        </div>
-      )}
+    <pre>
+      {JSON.stringify(selectedReceipt, null, 2)}
+    </pre>
+  </div>
+)}
 
     </div>
   );
