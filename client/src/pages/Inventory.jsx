@@ -209,6 +209,7 @@ return {
                             <th>In Stock (Closing)</th>
                             <th>Status</th>
                             <th>Update Store</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -243,9 +244,6 @@ return {
                                             {isMismatched ? 'Check Usage' : isLow ? 'Low Stock' : 'Optimal'}
                                         </span>
                                     </td>
-                                    <button className="btn-outline" onClick={() => openEdit(item)}>
-    <Edit size={14} /> Edit
-</button>
                                     <td>
                                         {updateAmount.id === item.id ? (
                                             <div style={{ display: 'flex', gap: '5px' }}>
@@ -264,6 +262,11 @@ return {
                                             </button>
                                         )}
                                     </td>
+                                    <td>
+    <button className="btn-outline" onClick={() => openEdit(item)}>
+        <Edit size={14} /> Edit
+    </button>
+</td>
                                 </tr>
                             );
                         })}
