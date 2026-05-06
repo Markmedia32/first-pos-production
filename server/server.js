@@ -6,6 +6,34 @@ const datetime = require('node-datetime');
 require('dotenv').config();
 let cookedStock = {};
 
+// ✅ FIX: Split combo meals like "Chapati Beans" into individual items
+const splitComboItems = (items) => {
+    const expanded = [];
+
+    items.forEach(item => {
+        const name = item.product_name.toLowerCase();
+
+        // If it's a combo meal, split it
+        if (name.includes("chapati beans")) {
+            expanded.push(
+                { product_name: "Chapati", qty: item.qty, price: 0 },
+                { product_name: "Beans", qty: item.qty, price: 0 }
+            );
+        } 
+        else if (name.includes("chapati ndengu")) {
+            expanded.push(
+                { product_name: "Chapati", qty: item.qty, price: 0 },
+                { product_name: "Ndengu", qty: item.qty, price: 0 }
+            );
+        }
+        else {
+            expanded.push(item);
+        }
+    });
+
+    return expanded;
+};
+
 const app = express();
 
 // Middleware
@@ -443,6 +471,7 @@ app.post('/api/pay/cash', (req, res) => {
 // --- UNIFIED POS PAYMENT (Cash, Credit, Advance, Comp, Mpesa) ---
 app.post('/api/pay/unified', (req, res) => {
     const { clientName, amount, items, paymentMethod, customerId } = req.body;
+    const cleanedItems = splitComboItems(items);
     
     let method = paymentMethod;
     let finalPrice = amount;
@@ -467,7 +496,12 @@ app.post('/api/pay/unified', (req, res) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
 
         const saleId = result.insertId;
-        const itemValues = items.map(item => [saleId, item.product_name, item.qty, item.price]);
+        const itemValues = cleanedItems.map(item => [
+    saleId,
+    item.product_name,
+    item.qty,
+    item.price
+]);
         const itemSql = `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`;
 
         db.query(itemSql, [itemValues], (itemErr) => {
@@ -483,9 +517,9 @@ app.post('/api/pay/unified', (req, res) => {
             let reason = (method === 'Complimentary') ? 'Staff/Owner Meal' : `Sale (${method})`;
             paymentStatus = 'Completed';
             // ALWAYS deduct stock for ALL completed sales
-if (items && items.length > 0) {
-    cookItems(items); // 👈 ADD THIS
-    deductStockWithYield(items, `Sale (${method})`);
+if (cleanedItems && cleanedItems.length > 0) {
+    cookItems(cleanedItems);
+    deductStockWithYield(cleanedItems, `Sale (${method})`);
 }
 
             res.json({ success: true, saleId });
@@ -533,8 +567,10 @@ app.post('/api/callback', (req, res) => {
 
         // Prevent double deduction (VERY IMPORTANT)
 if (finalStatus === 'Completed') {
-    cookItems(items);
-    deductStockWithYield(items, 'Mpesa Sale (Callback)');
+    const cleanedCallbackItems = splitComboItems(items);
+
+cookItems(cleanedCallbackItems);
+deductStockWithYield(cleanedCallbackItems, 'Mpesa Sale (Callback)');
 }
     }
 );
@@ -557,7 +593,7 @@ app.get('/api/reports/sales-summary', (req, res) => {
 FROM sales_items si
 JOIN sales s ON si.sale_id = s.id
 WHERE DATE(s.sale_date) = ?
-GROUP BY product_name, s.payment_method, s.payment_status, s.client_name
+GROUP BY si.id
 ORDER BY total_qty DESC
     `;
 
@@ -605,10 +641,56 @@ ORDER BY total_qty DESC
 }
 });
 
-            res.json({
-                itemized: itemResults,
-                payments
-            });
+           // ✅ NORMALIZE FUNCTION
+const normalize = (name) => name.trim().toLowerCase();
+
+// 🔥 SMART GROUPING MAP
+const grouped = {};
+
+itemResults.forEach(item => {
+    const rawName = item.product_name || '';
+    
+    // Split ONLY if clearly combined (space-based combo like "Chapati Beans")
+    const parts = rawName.split(' ').filter(Boolean);
+
+    // If it looks like a combo (2 known words), split it
+    if (parts.length > 1) {
+        parts.forEach(part => {
+            const key = normalize(part);
+
+            if (!grouped[key]) {
+                grouped[key] = {
+                    product_name: part,
+                    total_qty: 0,
+                    total_revenue: 0,
+                    price: item.price
+                };
+            }
+
+            grouped[key].total_qty += Number(item.total_qty) / parts.length;
+            grouped[key].total_revenue += Number(item.total_revenue) / parts.length;
+        });
+    } else {
+        const key = normalize(rawName);
+
+        if (!grouped[key]) {
+            grouped[key] = {
+                product_name: rawName,
+                total_qty: 0,
+                total_revenue: 0,
+                price: item.price
+            };
+        }
+
+        grouped[key].total_qty += Number(item.total_qty);
+        grouped[key].total_revenue += Number(item.total_revenue);
+    }
+});
+
+res.json({
+    itemized: Object.values(grouped),
+    payments
+});
         });
     });
 });
