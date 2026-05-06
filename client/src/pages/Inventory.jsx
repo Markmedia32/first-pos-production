@@ -24,10 +24,23 @@ const [editForm, setEditForm] = useState({
 
 const saveEdit = async () => {
     try {
-        await axios.put(`${API}/api/inventory/update-item`, editForm);
+        const payload = {
+            ...editForm,
+            stock_quantity: Number(editForm.stock_quantity),
+            opening_stock: Number(editForm.opening_stock),
+            added_stock: Number(editForm.added_stock)
+        };
+
+        await axios.put(`${API}/api/inventory/update-item`, payload, {
+            headers: {
+                "user-role": "Admin"
+            }
+        });
+
         setEditItem(null);
         loadData();
     } catch (err) {
+        console.error(err.response?.data || err.message);
         alert("Failed to update item");
     }
 };
@@ -261,7 +274,7 @@ const saveEdit = async () => {
                                     </td>
                                     <td>
     <button className="edit-test-btn" onClick={() => openEdit(item)}>
-    EDIT TEST
+    EDIT 
 </button>
 </td>
                                 </tr>
