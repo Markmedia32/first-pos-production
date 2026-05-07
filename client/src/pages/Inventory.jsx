@@ -187,7 +187,6 @@ const saveEdit = async () => {
             </div>
 
             {/* --- RECONCILIATION / AUDIT SECTION --- */}
-            // ✅ REPLACE your entire "RECONCILIATION / AUDIT SECTION" with this
 
 <section className="recon-section">
     <h3><AlertCircle size={20} /> Kitchen Audit</h3>
