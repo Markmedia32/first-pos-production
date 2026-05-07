@@ -7,17 +7,6 @@ const db = require('./db');
 require('dotenv').config();
 let cookedStock = {};
 
-// ✅ ADD THIS near the top of server.js, after splitComboItems (around line 80)
-const normalizePaymentMethod = (method) => {
-    if (!method) return '';
-    const m = method.toLowerCase();
-    if (m.includes('mpesa') || m.includes('m-pesa')) return 'MPesa';
-    if (m.includes('cash')) return 'Cash';
-    if (m.includes('advance')) return 'Advance';
-    if (m.includes('credit')) return 'Credit';
-    if (m.includes('compliment')) return 'Complimentary';
-    return method;
-};
 // ✅ FIX: Split combo meals like "Chapati Beans" into individual items
 // ✅ SPLIT COMBO ITEMS (FOR STOCK LOGIC)
 const splitComboItems = (items) => {
@@ -621,120 +610,131 @@ app.post('/api/pay/cash', (req, res) => {
 // --- UNIFIED POS PAYMENT (Cash, Credit, Advance, Comp, Mpesa) ---
 app.post('/api/pay/unified', (req, res) => {
     const { clientName, amount, items, paymentMethod, customerId } = req.body;
-
-    const stockItems = splitComboItems(items || []);
-    const cleanedItems = Array.isArray(items) ? items : [];
-
+    const stockItems = splitComboItems(items || []); // ONLY for stock
+    const cleanedItems = Array.isArray(items) ? items : []; // ORIGINAL for sales
+    
     let method = paymentMethod || "";
     let finalPrice = amount;
-    let paymentStatus = 'Completed';
+    let paymentStatus = 'Completed'; 
 
-    // ✅ Normalize MPesa naming
-    if (method.toLowerCase().includes('mpesa') || method.toLowerCase().includes('m-pesa')) {
-        method = 'MPesa';
-    }
-
-    // ✅ Handle special cases
-    if (method === 'Credit') {
-        paymentStatus = 'Unpaid';
-    }
-
-    if (method === 'Complimentary') {
-        finalPrice = 0;
-    }
-
-    const sql = `
-        INSERT INTO sales 
-        (client_name, total_price, payment_status, payment_method, customer_id, sale_date) 
-        VALUES (?, ?, ?, ?, ?, NOW())
-    `;
-
-    // ✅ WALLET VALIDATION
-    // ✅ WALLET VALIDATION (FIXED)
-if (method === 'Advance') {
-    if (!customerId) {
-        return res.status(400).json({ error: "Customer ID is required for wallet payment" });
-    }
-
+     // ✅ WALLET VALIDATION (ADD THIS HERE)
+    if (method === 'Advance' && customerId) {
     return db.query(
         "SELECT wallet_balance FROM customers WHERE customer_id = ?",
         [customerId],
         (err, result) => {
-            if (err) return res.status(500).json({ error: "Database error checking wallet" });
-            if (!result || result.length === 0) return res.status(404).json({ error: "Customer not found" });
 
-            const walletBalance = parseFloat(result[0].wallet_balance || 0);
-            const amountToPay = parseFloat(finalPrice || 0);
-
-            if (walletBalance < amountToPay) {
-                return res.status(400).json({
-                    error: "Insufficient wallet balance",
-                    wallet: walletBalance,
-                    required: amountToPay
-                });
+            if (err || result.length === 0) {
+                return res.status(500).json({ error: "Customer not found" });
             }
 
-            processSale(); // ✅ ONLY called here, inside the callback
+            if (result[0].wallet_balance < finalPrice) {
+                return res.status(400).json({ error: "Insufficient wallet balance" });
+            }
+
+            // ✅ ONLY NOW continue with sale
+            proceedWithSale();
         }
     );
-} else {
-    processSale(); // ✅ All other methods go here
 }
 
-    function processSale() {
-        db.query(sql, [clientName, finalPrice, paymentStatus, method, customerId || null], (err, result) => {
+    // ✅ STRENGTHENED NORMALIZATION
+    // This ensures that no matter what the frontend sends, the DB gets 'Mpesa'
+    if (method.toLowerCase().includes('mpesa') || method.toLowerCase().includes('m-pesa')) {
+        method = 'MPesa';
+    }
 
-            if (err) {
-                console.error("SALE INSERT ERROR:", err);
-                return res.status(500).json({ success: false, error: err.message });
+    if (method === 'Complimentary') {
+    finalPrice = amount; 
+    } else if (method === 'Credit') {
+        paymentStatus = 'Unpaid';
+    }
+
+    const sql = `INSERT INTO sales (client_name, total_price, payment_status, payment_method, customer_id, sale_date) 
+                 VALUES (?, ?, ?, ?, ?, NOW())`;
+
+                 // ✅ WALLET VALIDATION (ADD THIS HERE)
+
+
+    db.query(sql, [clientName, finalPrice, paymentStatus, method, customerId || null], (err, result) => {
+        if (err) return res.status(500).json({ success: false, error: err.message });
+
+        const saleId = result.insertId;
+        
+const priceMap = {};
+cleanedItems.forEach(i => {
+    priceMap[i.product_name] = i.price;
+});
+
+    const itemValues = Array.isArray(cleanedItems)
+    ? cleanedItems
+        .filter(i => i && i.product_name)
+        .map(item => [
+    saleId,
+    item.product_name,
+    item.qty || 0,
+    priceMap[item.product_name] || item.price || 0
+])
+    : [];
+        const itemSql = `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`;
+
+        db.query(itemSql, [itemValues], (itemErr) => {
+            if (itemErr) return res.status(500).json({ success: false });
+
+            if (method === 'Advance' && customerId) {
+
+    db.query(
+        "UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?",
+        [finalPrice, customerId],
+        (walletErr) => {
+
+            if (walletErr) {
+                console.error(walletErr);
             }
 
-            const saleId = result.insertId;
-
-            const itemValues = cleanedItems.map(item => [
-                saleId,
-                item.product_name,
-                item.qty || 0,
-                item.price || 0
-            ]);
-
+            // Get updated balance
             db.query(
-                `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`,
-                [itemValues],
-                (itemErr) => {
+                "SELECT wallet_balance FROM customers WHERE customer_id = ?",
+                [customerId],
+                (balErr, balResult) => {
 
-                    if (itemErr) {
-                        console.error("ITEM INSERT ERROR:", itemErr);
-                        return res.status(500).json({ success: false });
-                    }
+                    if (!balErr && balResult.length > 0) {
 
-                    // ✅ WALLET DEDUCTION
-                    if (method === 'Advance' && customerId) {
+                        const newBalance = balResult[0].wallet_balance;
+
                         db.query(
-                            "UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?",
-                            [finalPrice, customerId]
-                        );
+    `INSERT INTO wallet_transactions
+    (customer_id, customer_name, type, amount, balance_after, reference)
+    VALUES (?, ?, 'WITHDRAWAL', ?, ?, ?)`,
+    [
+        customerId,
+        clientName,
+        finalPrice,   // ✅ use finalPrice HERE
+        newBalance,
+        `Food Purchase`
+    ]
+);
                     }
-
-                    // ✅ CREDIT UPDATE
-                    if (method === 'Credit' && customerId) {
-                        db.query(
-                            "UPDATE customers SET credit_balance = credit_balance + ? WHERE customer_id = ?",
-                            [finalPrice, customerId]
-                        );
-                    }
-
-                    // ✅ STOCK DEDUCTION
-                    if (stockItems.length > 0) {
-                        cookItems(stockItems);
-                        deductStockWithYield(stockItems, `Sale (${method})`);
-                    }
-
-                    res.json({ success: true, saleId });
                 }
             );
+        }
+    );
+}
+            if (method === 'Credit' && customerId) {
+                db.query("UPDATE customers SET credit_balance = credit_balance + ? WHERE customer_id = ?", [amount, customerId]);
+            }
+
+            let reason = (method === 'Complimentary') ? 'Staff/Owner Meal' : `Sale (${method})`;
+            paymentStatus = 'Completed';
+            // ALWAYS deduct stock for ALL completed sales
+if (stockItems && stockItems.length > 0) {
+    cookItems(stockItems);
+    deductStockWithYield(stockItems, `Sale (${method})`);
+}
+
+            res.json({ success: true, saleId });
         });
-    }
+    });
 });
 
 // 4. CALLBACK
@@ -919,6 +919,19 @@ ORDER BY total_qty DESC
     `;
 
     // 🔧 NORMALIZE PAYMENT METHODS (CRITICAL FOR REPORTS)
+const normalizePaymentMethod = (method) => {
+    if (!method) return '';
+
+    const m = method.toLowerCase();
+
+    if (m.includes('mpesa') || m.includes('m-pesa')) return 'MPesa';
+    if (m.includes('cash')) return 'Cash';
+    if (m.includes('advance')) return 'Advance';
+    if (m.includes('credit')) return 'Credit';
+    if (m.includes('compliment')) return 'Complimentary';
+
+    return method;
+};
 
     db.query(itemizedSql, [selectedDate], async (err, itemResults) => {
         // 🔥 APPLY COMBO EXPANSION
