@@ -618,7 +618,8 @@ app.post('/api/pay/unified', (req, res) => {
     let paymentStatus = 'Completed'; 
 
      // ✅ WALLET VALIDATION (ADD THIS HERE)
-    if (method === 'Advance' && customerId) {
+    // ✅ WALLET VALIDATION (CORRECT PLACE)
+if (method === 'Advance' && customerId) {
     return db.query(
         "SELECT wallet_balance FROM customers WHERE customer_id = ?",
         [customerId],
@@ -632,10 +633,56 @@ app.post('/api/pay/unified', (req, res) => {
                 return res.status(400).json({ error: "Insufficient wallet balance" });
             }
 
-            // ✅ ONLY NOW continue with sale
-            proceedWithSale();
+            // ✅ CONTINUE SALE AFTER VALIDATION
+            continueSale();
         }
     );
+}
+
+// ✅ NORMAL FLOW
+continueSale();
+
+
+// ✅ DEFINE FUNCTION HERE
+function continueSale() {
+
+    db.query(sql, [clientName, finalPrice, paymentStatus, method, customerId || null], (err, result) => {
+
+        if (err) return res.status(500).json({ success: false, error: err.message });
+
+        const saleId = result.insertId;
+
+        const priceMap = {};
+        cleanedItems.forEach(i => {
+            priceMap[i.product_name] = i.price;
+        });
+
+        const itemValues = cleanedItems.map(item => [
+            saleId,
+            item.product_name,
+            item.qty || 0,
+            priceMap[item.product_name] || item.price || 0
+        ]);
+
+        db.query(
+            `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`,
+            [itemValues],
+            (itemErr) => {
+
+                if (itemErr) return res.status(500).json({ success: false });
+
+                // ✅ WALLET DEDUCTION
+                if (method === 'Advance' && customerId) {
+                    db.query(
+                        "UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?",
+                        [finalPrice, customerId]
+                    );
+                }
+
+                res.json({ success: true, saleId });
+            }
+        );
+    });
 }
 
     // ✅ STRENGTHENED NORMALIZATION
