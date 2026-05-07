@@ -1194,16 +1194,25 @@ app.post('/api/inventory/add-new', (req, res) => {
 });
 
 // ✅ UPDATED: Precision Audit Logic
+// ✅ REPLACE your entire /api/inventory/audit-report route with this
+
 app.get('/api/inventory/audit-report', (req, res) => {
     const sql = `
         SELECT 
-            i.item_name, i.unit_measure, i.stock_quantity, i.opening_stock, i.added_stock,
-            y.menu_item_name, y.yield_per_unit,
-            (SELECT COALESCE(SUM(si.qty), 0) 
-             FROM sales_items si 
-             JOIN sales s ON si.sale_id = s.id 
-             WHERE si.product_name = y.menu_item_name 
-             AND s.payment_status = 'Completed') as total_sold
+            i.item_name, 
+            i.unit_measure, 
+            i.stock_quantity, 
+            i.opening_stock, 
+            i.added_stock,
+            y.menu_item_name, 
+            y.yield_per_unit,
+            (
+                SELECT COALESCE(SUM(si.qty), 0) 
+                FROM sales_items si 
+                JOIN sales s ON si.sale_id = s.id 
+                WHERE si.product_name = y.menu_item_name 
+                AND s.payment_status = 'Completed'
+            ) as total_sold
         FROM inventory i
         LEFT JOIN yield_rules y ON i.item_name = y.material_name
     `;
@@ -1214,95 +1223,95 @@ app.get('/api/inventory/audit-report', (req, res) => {
         const groupedAudit = {};
 
         results.forEach(row => {
-            if (!groupedAudit[row.item_name]) {
-                groupedAudit[row.item_name] = {
+            const itemKey = row.item_name;
+
+            // Initialize the material entry
+            if (!groupedAudit[itemKey]) {
+                groupedAudit[itemKey] = {
                     name: row.item_name,
                     unit: row.unit_measure,
-                    currentInStore: row.stock_quantity,
-                    totalStartStore: parseFloat(row.opening_stock) + parseFloat(row.added_stock),
-                    soldItems: []
+                    currentInStore: parseFloat(row.stock_quantity) || 0,
+                    totalStartStore: (parseFloat(row.opening_stock) || 0) + (parseFloat(row.added_stock) || 0),
+                    // Use a MAP to group by menu_item_name and sum qty
+                    soldMap: {}
                 };
             }
-            if (row.menu_item_name && row.total_sold > 0) {
-                groupedAudit[row.item_name].soldItems.push({
-                    name: row.menu_item_name,
-                    qty: row.total_sold,
-                    yield: row.yield_per_unit
-                });
+
+            // ✅ GROUP by menu_item_name — sum qty if same item appears multiple times
+            if (row.menu_item_name && parseFloat(row.total_sold) > 0) {
+                const menuKey = row.menu_item_name;
+                if (!groupedAudit[itemKey].soldMap[menuKey]) {
+                    groupedAudit[itemKey].soldMap[menuKey] = {
+                        name: menuKey,
+                        qty: 0,
+                        yield: parseFloat(row.yield_per_unit) || 1
+                    };
+                }
+                groupedAudit[itemKey].soldMap[menuKey].qty += parseFloat(row.total_sold) || 0;
             }
         });
-        
-        app.get('/api/reports/customer-usage-timeline/:id', (req, res) => {
-    const customerId = req.params.id;
-
-    // 1. Find the date of the most recent Topup for this customer
-    const lastTopUpSql = `
-        SELECT sale_date, total_price 
-        FROM sales 
-        WHERE customer_id = ? AND payment_method = 'Topup' 
-        ORDER BY sale_date DESC LIMIT 1`;
-
-    db.query(lastTopUpSql, [customerId], (err, topUpResults) => {
-        if (err) return res.status(500).json(err);
-
-        const lastDate = topUpResults.length > 0 ? topUpResults[0].sale_date : '1970-01-01';
-        const lastAmount = topUpResults.length > 0 ? topUpResults[0].total_price : 0;
-
-        // 2. Fetch all meals ordered since that Topup date
-        const mealSql = `
-            SELECT si.product_name, si.qty, si.price, (si.qty * si.price) as total_revenue, s.sale_date as created_at
-            FROM sales_items si
-            JOIN sales s ON si.sale_id = s.id
-            WHERE s.customer_id = ? 
-            AND s.sale_date >= ?
-            AND s.payment_method != 'Topup'
-            ORDER BY s.sale_date DESC`;
-
-        db.query(mealSql, [customerId, lastDate], (err2, mealResults) => {
-            if (err2) return res.status(500).json(err2);
-            
-            res.json({
-                lastTopUp: { date: lastDate, amount: lastAmount },
-                orders: mealResults
-            });
-        });
-    });
-});
-
 
         const finalReport = Object.values(groupedAudit).map(mat => {
-            let totalFractionalUsed = 0;
-            let kitchenSummary = [];
+            // Convert soldMap back to array
+            const soldItems = Object.values(mat.soldMap);
 
-            mat.soldItems.forEach(item => {
+            // ✅ Calculate total fractional raw material used across ALL menu items
+            let totalFractionalUsed = 0;
+
+            soldItems.forEach(item => {
                 const unitsUsed = item.qty / item.yield;
                 totalFractionalUsed += unitsUsed;
-
-                // Calculate how many portions are left in the currently "Open" bag/unit
-                const fullUnitsOpened = Math.ceil(unitsUsed);
-                const portionsLeft = (fullUnitsOpened * item.yield) - item.qty;
-                
-                kitchenSummary.push(`${portionsLeft} portions left from the opened ${mat.unit}`);
             });
 
-            // CHANGE: We use Math.floor because if 0.04 of a bag is used, 
-            // the store is missing 1 full bag (it's now in the kitchen).
             const exactRemaining = mat.totalStartStore - totalFractionalUsed;
             const wholeUnitsInStore = Math.floor(exactRemaining);
-            
+
+            // ✅ Clean unit display — strip numbers from "2kg Packet" → "Packet" or keep as-is
+            const unitDisplay = mat.unit || 'unit';
+
             let message = "";
-            if (mat.soldItems.length > 0) {
-                const soldDetails = mat.soldItems.map(si => `${si.qty} ${si.name}`).join(', ');
-                message = `Sold: ${soldDetails}. You should have ${kitchenSummary.join(' and ')}. ` +
-                          `The Store should have ${wholeUnitsInStore} full ${mat.unit} remaining.`;
+
+            if (soldItems.length > 0) {
+                // ✅ Show clean sold summary — group into one sentence
+                const totalPortionsSold = soldItems.reduce((acc, i) => acc + i.qty, 0);
+                
+                // Show breakdown only if multiple menu items use this material
+                let soldDetails;
+                if (soldItems.length === 1) {
+                    soldDetails = `${soldItems[0].qty} portions of ${soldItems[0].name}`;
+                } else {
+                    soldDetails = soldItems
+                        .map(si => `${si.qty} × ${si.name}`)
+                        .join(', ');
+                    soldDetails += ` (${totalPortionsSold} portions total)`;
+                }
+
+                // ✅ Kitchen remainder — how many portions remain in the currently open unit
+                const openUnitPortions = soldItems[0]?.yield || 1; // portions per unit
+                const portionsUsedInOpenUnit = totalFractionalUsed % 1; // fractional part
+                const portionsLeftInOpen = portionsUsedInOpenUnit > 0 
+                    ? Math.round((1 - portionsUsedInOpenUnit) * openUnitPortions)
+                    : 0;
+
+                if (wholeUnitsInStore < 0) {
+                    message = `⚠️ Stock shortage! Sold: ${soldDetails}. Expected ${wholeUnitsInStore < 0 ? 0 : wholeUnitsInStore} ${unitDisplay} in store but calculations show a deficit. Please recount.`;
+                } else if (portionsLeftInOpen > 0) {
+                    message = `Sold: ${soldDetails}. ~${portionsLeftInOpen} portions remain in the open ${unitDisplay}. Store should have ${wholeUnitsInStore} full ${unitDisplay}.`;
+                } else {
+                    message = `Sold: ${soldDetails}. Store should have ${wholeUnitsInStore} full ${unitDisplay}.`;
+                }
             } else {
-                message = `No sales recorded. Store should have ${mat.totalStartStore} ${mat.unit}.`;
+                message = `No sales recorded. Store should have ${mat.totalStartStore} ${unitDisplay}.`;
             }
 
             return {
                 item: mat.name,
-                message: message,
-                shouldBe: wholeUnitsInStore // Returns a whole number now
+                unit: unitDisplay,
+                totalSold: Object.values(mat.soldMap).reduce((acc, i) => acc + i.qty, 0),
+                soldBreakdown: Object.values(mat.soldMap),
+                shouldBe: Math.max(0, wholeUnitsInStore),
+                hasShortage: wholeUnitsInStore < 0,
+                message
             };
         });
 

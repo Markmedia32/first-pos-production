@@ -187,22 +187,88 @@ const saveEdit = async () => {
             </div>
 
             {/* --- RECONCILIATION / AUDIT SECTION --- */}
-            <section className="recon-section">
-                <h3><AlertCircle size={20} /> Today's Kitchen Audit</h3>
-                <div className="recon-grid">
-                    {auditMessages.map((msg, i) => {
-                        const itemStock = stock.find(s => s.item_name === msg.item);
-                        const hasVariance = itemStock && parseFloat(itemStock.stock_quantity) !== parseFloat(msg.shouldBe);
+            // ✅ REPLACE your entire "RECONCILIATION / AUDIT SECTION" with this
 
-                        return (
-                            <div key={i} className={`audit-card ${hasVariance ? 'variance-warning' : ''}`}>
-                                <h4>{msg.item}</h4>
-                                <p>{msg.message}</p>
+<section className="recon-section">
+    <h3><AlertCircle size={20} /> Kitchen Audit</h3>
+    <div className="recon-grid">
+        {auditMessages.map((msg, i) => {
+            const isShortage = msg.hasShortage || msg.shouldBe <= 0;
+            const hasSales = msg.totalSold > 0;
+
+            return (
+                <div
+                    key={i}
+                    className="audit-card"
+                    style={{
+                        borderLeft: `4px solid ${isShortage ? '#e63946' : hasSales ? '#f4a261' : '#2a9d8f'}`,
+                        background: isShortage ? '#fff5f5' : 'white'
+                    }}
+                >
+                    {/* Card Header */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{msg.item}</h4>
+                        <span style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            padding: '2px 8px',
+                            borderRadius: 4,
+                            background: isShortage ? '#fee2e2' : '#dcfce7',
+                            color: isShortage ? '#b91c1c' : '#15803d'
+                        }}>
+                            {isShortage ? '⚠️ CHECK STOCK' : `${msg.shouldBe} ${msg.unit} left`}
+                        </span>
+                    </div>
+
+                    {/* Sold Breakdown */}
+                    {msg.soldBreakdown && msg.soldBreakdown.length > 0 ? (
+                        <div style={{ marginBottom: 8 }}>
+                            <p style={{ margin: '0 0 4px', fontSize: 12, color: '#666', fontWeight: 600 }}>
+                                SOLD TODAY:
+                            </p>
+                            {msg.soldBreakdown.map((item, idx) => (
+                                <div key={idx} style={{
+                                    display: 'flex', justifyContent: 'space-between',
+                                    fontSize: 13, padding: '2px 0',
+                                    borderBottom: idx < msg.soldBreakdown.length - 1 ? '1px solid #f3f4f6' : 'none'
+                                }}>
+                                    <span style={{ color: '#374151' }}>{item.name}</span>
+                                    <span style={{ fontWeight: 600, color: '#e63946' }}>×{item.qty}</span>
+                                </div>
+                            ))}
+                            <div style={{
+                                display: 'flex', justifyContent: 'space-between',
+                                fontSize: 12, marginTop: 4, paddingTop: 4,
+                                borderTop: '1px dashed #e5e7eb', color: '#6b7280'
+                            }}>
+                                <span>Total portions sold</span>
+                                <span style={{ fontWeight: 700 }}>{msg.totalSold}</span>
                             </div>
-                        );
-                    })}
+                        </div>
+                    ) : (
+                        <p style={{ fontSize: 13, color: '#9ca3af', margin: '0 0 8px' }}>No sales recorded yet</p>
+                    )}
+
+                    {/* Expected Store Stock */}
+                    <div style={{
+                        background: '#f9fafb', borderRadius: 6,
+                        padding: '6px 10px', fontSize: 12, color: '#374151'
+                    }}>
+                        <strong>Store should have:</strong>{' '}
+                        <span style={{ color: isShortage ? '#e63946' : '#2a9d8f', fontWeight: 700 }}>
+                            {Math.max(0, msg.shouldBe)} full {msg.unit}
+                        </span>
+                        {isShortage && (
+                            <span style={{ color: '#e63946', display: 'block', fontSize: 11, marginTop: 2 }}>
+                                Stock deficit detected — please recount
+                            </span>
+                        )}
+                    </div>
                 </div>
-            </section>
+            );
+        })}
+    </div>
+</section>
 
             {/* --- STOCK TABLE --- */}
             <div className="stock-container">
