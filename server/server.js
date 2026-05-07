@@ -3,6 +3,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const datetime = require('node-datetime');
+const db = require('./db');
 require('dotenv').config();
 let cookedStock = {};
 
@@ -142,7 +143,7 @@ app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // Database Connection
-const db = require('./db');
+
 // Test Database Connection
 db.getConnection((err, connection) => {
     if (err) {
@@ -888,6 +889,21 @@ GROUP BY si.product_name
 ORDER BY total_qty DESC
     `;
 
+    // 🔧 NORMALIZE PAYMENT METHODS (CRITICAL FOR REPORTS)
+const normalizePaymentMethod = (method) => {
+    if (!method) return '';
+
+    const m = method.toLowerCase();
+
+    if (m.includes('mpesa') || m.includes('m-pesa')) return 'MPesa';
+    if (m.includes('cash')) return 'Cash';
+    if (m.includes('advance')) return 'Advance';
+    if (m.includes('credit')) return 'Credit';
+    if (m.includes('compliment')) return 'Complimentary';
+
+    return method;
+};
+
     db.query(itemizedSql, [selectedDate], async (err, itemResults) => {
         // 🔥 APPLY COMBO EXPANSION
 const expandedItems = await expandComboForReports(itemResults);
@@ -918,7 +934,7 @@ const expandedItems = await expandComboForReports(itemResults);
             };
 
             payResults.forEach(row => {
-    const method = row.payment_method;
+    const method = normalizePaymentMethod(row.payment_method);
     const amount = parseFloat(row.total || 0);
 
     if (method === 'Cash') {
@@ -974,7 +990,11 @@ app.get('/api/reports/advanced-summary', (req, res) => {
     const sql = `
         SELECT DATE(sale_date) as date, SUM(total_price) as total
         FROM sales
-        WHERE payment_status = 'Completed' AND payment_method IN ('Cash', 'M-Pesa')
+        WHERE payment_status = 'Completed'
+AND (
+    LOWER(payment_method) LIKE '%cash%'
+    OR LOWER(payment_method) LIKE '%mpesa%'
+)
         GROUP BY DATE(sale_date)
         ORDER BY date DESC
         LIMIT 30
@@ -1036,12 +1056,15 @@ app.get('/api/reports/hourly-sales', (req, res) => {
 app.get('/api/reports/monthly-cumulative', (req, res) => {
     const { month } = req.query; 
     const sql = `
-        SELECT COALESCE(SUM(total_price), 0) as total_revenue 
-        FROM sales 
-        WHERE DATE_FORMAT(sale_date, '%Y-%m') = ? 
-        AND payment_status = 'Completed' 
-        AND payment_method IN ('Cash', 'MPesa') -- Ignores 'Advance' and 'Credit'
-    `;
+    SELECT COALESCE(SUM(total_price), 0) as total_revenue 
+    FROM sales 
+    WHERE DATE_FORMAT(sale_date, '%Y-%m') = ? 
+    AND payment_status = 'Completed'
+    AND (
+        LOWER(payment_method) LIKE '%cash%' 
+        OR LOWER(payment_method) LIKE '%mpesa%'
+    )
+`;
 
     db.query(sql, [month], (err, results) => {
         if (err) return res.status(500).json(err);
@@ -1346,7 +1369,7 @@ app.get('/api/reports/date-range', (req, res) => {
 
             // ✅ SAFE LOOP
             (paymentsRaw || []).forEach(row => {
-                const method = row.payment_method;
+                const method = normalizePaymentMethod(row.payment_method);
                 const amount = parseFloat(row.total || 0);
 
                 if (method === 'Cash') payments.Cash += amount;
