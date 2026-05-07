@@ -7,6 +7,17 @@ const db = require('./db');
 require('dotenv').config();
 let cookedStock = {};
 
+// ✅ ADD THIS near the top of server.js, after splitComboItems (around line 80)
+const normalizePaymentMethod = (method) => {
+    if (!method) return '';
+    const m = method.toLowerCase();
+    if (m.includes('mpesa') || m.includes('m-pesa')) return 'MPesa';
+    if (m.includes('cash')) return 'Cash';
+    if (m.includes('advance')) return 'Advance';
+    if (m.includes('credit')) return 'Credit';
+    if (m.includes('compliment')) return 'Complimentary';
+    return method;
+};
 // ✅ FIX: Split combo meals like "Chapati Beans" into individual items
 // ✅ SPLIT COMBO ITEMS (FOR STOCK LOGIC)
 const splitComboItems = (items) => {
@@ -640,7 +651,11 @@ app.post('/api/pay/unified', (req, res) => {
 
     // ✅ WALLET VALIDATION
     // ✅ WALLET VALIDATION (FIXED)
-if (method === 'Advance' && customerId) {
+if (method === 'Advance') {
+    if (!customerId) {
+        return res.status(400).json({ error: "Customer ID is required for wallet payment" });
+    }
+
     return db.query(
         "SELECT wallet_balance FROM customers WHERE customer_id = ?",
         [customerId],
@@ -659,12 +674,11 @@ if (method === 'Advance' && customerId) {
                 });
             }
 
-            processSale(); // ✅ Only called INSIDE the callback now
+            processSale(); // ✅ ONLY called here, inside the callback
         }
     );
 } else {
-    // ✅ All other payment methods go here directly
-    processSale();
+    processSale(); // ✅ All other methods go here
 }
 
     function processSale() {
@@ -905,19 +919,6 @@ ORDER BY total_qty DESC
     `;
 
     // 🔧 NORMALIZE PAYMENT METHODS (CRITICAL FOR REPORTS)
-const normalizePaymentMethod = (method) => {
-    if (!method) return '';
-
-    const m = method.toLowerCase();
-
-    if (m.includes('mpesa') || m.includes('m-pesa')) return 'MPesa';
-    if (m.includes('cash')) return 'Cash';
-    if (m.includes('advance')) return 'Advance';
-    if (m.includes('credit')) return 'Credit';
-    if (m.includes('compliment')) return 'Complimentary';
-
-    return method;
-};
 
     db.query(itemizedSql, [selectedDate], async (err, itemResults) => {
         // 🔥 APPLY COMBO EXPANSION

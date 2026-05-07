@@ -109,12 +109,14 @@ const Pos = () => {
 
   try {
     const payload = {
-      amount: method === 'Complimentary' ? 0 : total,
-      clientName: finalClientName,
-      items: cart,
-      paymentMethod: method, 
-      customerId: selectedCustomer?.customer_id || null,
-    };
+  amount: method === 'Complimentary' ? 0 : total,
+  clientName: finalClientName,
+  items: cart,
+  paymentMethod: method,
+  customerId: selectedCustomer ? selectedCustomer.customer_id : null,
+};
+
+console.log("🚀 Sending payload:", payload);
 
     await axios.post(`${API_BASE_URL}/api/pay/unified`, payload);
 
@@ -239,8 +241,8 @@ const Pos = () => {
                 disabled={
   !selectedCustomer ||
   loading ||
-  selectedCustomer.wallet_balance < total ||
-  selectedCustomer.credit_balance > 0 // 🚫 BLOCK if debt exists
+  (selectedCustomer && parseFloat(selectedCustomer.wallet_balance) < total) ||
+  (selectedCustomer && parseFloat(selectedCustomer.credit_balance) > 0)
 }
             >
                 <Wallet size={16}/> WALLET ({selectedCustomer?.wallet_balance || 0})
