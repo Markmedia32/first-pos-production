@@ -1253,7 +1253,7 @@ app.get('/api/reports/date-range', (req, res) => {
         GROUP BY payment_method
     `;
 
-    db.query(itemizedSql, [from, to], (err, items) => {
+    db.query(itemizedSql, [from, to], async (err, items) => {
         if (err) {
             console.error("ITEM QUERY ERROR:", err);
             return res.status(500).json({ error: "Item query failed" });
@@ -1264,6 +1264,9 @@ app.get('/api/reports/date-range', (req, res) => {
                 console.error("PAYMENT QUERY ERROR:", err2);
                 return res.status(500).json({ error: "Payment query failed" });
             }
+
+            // ✅ EXPAND COMBO MEALS
+const expandedItems = await expandComboForReports(items);
 
             const payments = {
                 Cash: 0,
@@ -1295,7 +1298,7 @@ app.get('/api/reports/date-range', (req, res) => {
                 // ✅ FINAL SMART GROUPING
 const grouped = {};
 
-(items || []).forEach(item => {
+(expandedItems || []).forEach(item => {
 
     const key = item.product_name.trim().toLowerCase();
 
