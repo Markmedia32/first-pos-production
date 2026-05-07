@@ -1232,18 +1232,17 @@ app.get('/api/reports/date-range', (req, res) => {
     }
 
     const itemizedSql = `
-        SELECT 
-            si.product_name,
-            SUM(si.qty) as total_qty,
-            MAX(si.price) as price,
-            SUM(si.qty * si.price) as total_revenue,
-            s.payment_method,
-            s.payment_status
-        FROM sales_items si
-        JOIN sales s ON si.sale_id = s.id
-        WHERE DATE(s.sale_date) BETWEEN ? AND ?
-        GROUP BY si.product_name, s.payment_method, s.payment_status
-    `;
+    SELECT 
+        si.product_name,
+        SUM(si.qty) as total_qty,
+        MAX(si.price) as price,
+        SUM(si.qty * si.price) as total_revenue
+    FROM sales_items si
+    JOIN sales s ON si.sale_id = s.id
+    WHERE DATE(s.sale_date) BETWEEN ? AND ?
+    GROUP BY si.product_name
+    ORDER BY total_qty DESC
+`;
 
     const paymentsSql = `
         SELECT payment_method, SUM(total_price) as total
@@ -1293,8 +1292,36 @@ app.get('/api/reports/date-range', (req, res) => {
                 payments.Complimentary +
                 payments.CreditCard;
 
+                // ✅ FINAL SMART GROUPING
+const grouped = {};
+
+(items || []).forEach(item => {
+
+    const key = item.product_name.trim().toLowerCase();
+
+    if (!grouped[key]) {
+        grouped[key] = {
+            product_name: item.product_name,
+            total_qty: 0,
+            total_revenue: 0,
+            price: Number(item.price || 0)
+        };
+    }
+
+    grouped[key].total_qty += Number(item.total_qty || 0);
+    grouped[key].total_revenue += Number(item.total_revenue || 0);
+
+    // recalculate proper unit price
+    if (grouped[key].total_qty > 0) {
+        grouped[key].price =
+            grouped[key].total_revenue / grouped[key].total_qty;
+    }
+});
+
+const finalItems = Object.values(grouped);
+
             res.json({
-                itemized: items || [],
+                itemized: finalItems,
                 payments,
                 totalRevenue: totalRevenue || 0
             });
