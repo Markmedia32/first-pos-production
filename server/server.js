@@ -610,178 +610,111 @@ app.post('/api/pay/cash', (req, res) => {
 // --- UNIFIED POS PAYMENT (Cash, Credit, Advance, Comp, Mpesa) ---
 app.post('/api/pay/unified', (req, res) => {
     const { clientName, amount, items, paymentMethod, customerId } = req.body;
-    const stockItems = splitComboItems(items || []); // ONLY for stock
-    const cleanedItems = Array.isArray(items) ? items : []; // ORIGINAL for sales
-    
+
+    const stockItems = splitComboItems(items || []);
+    const cleanedItems = Array.isArray(items) ? items : [];
+
     let method = paymentMethod || "";
     let finalPrice = amount;
-    let paymentStatus = 'Completed'; 
+    let paymentStatus = 'Completed';
 
-     // ✅ WALLET VALIDATION (ADD THIS HERE)
-    // ✅ WALLET VALIDATION (CORRECT PLACE)
-if (method === 'Advance' && customerId) {
-    return db.query(
-        "SELECT wallet_balance FROM customers WHERE customer_id = ?",
-        [customerId],
-        (err, result) => {
-
-            if (err || result.length === 0) {
-                return res.status(500).json({ error: "Customer not found" });
-            }
-
-            if (result[0].wallet_balance < finalPrice) {
-                return res.status(400).json({ error: "Insufficient wallet balance" });
-            }
-
-            // ✅ CONTINUE SALE AFTER VALIDATION
-            continueSale();
-        }
-    );
-}
-
-// ✅ NORMAL FLOW
-continueSale();
-
-
-// ✅ DEFINE FUNCTION HERE
-function continueSale() {
-
-    db.query(sql, [clientName, finalPrice, paymentStatus, method, customerId || null], (err, result) => {
-
-        if (err) return res.status(500).json({ success: false, error: err.message });
-
-        const saleId = result.insertId;
-
-        const priceMap = {};
-        cleanedItems.forEach(i => {
-            priceMap[i.product_name] = i.price;
-        });
-
-        const itemValues = cleanedItems.map(item => [
-            saleId,
-            item.product_name,
-            item.qty || 0,
-            priceMap[item.product_name] || item.price || 0
-        ]);
-
-        db.query(
-            `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`,
-            [itemValues],
-            (itemErr) => {
-
-                if (itemErr) return res.status(500).json({ success: false });
-
-                // ✅ WALLET DEDUCTION
-                if (method === 'Advance' && customerId) {
-                    db.query(
-                        "UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?",
-                        [finalPrice, customerId]
-                    );
-                }
-
-                res.json({ success: true, saleId });
-            }
-        );
-    });
-}
-
-    // ✅ STRENGTHENED NORMALIZATION
-    // This ensures that no matter what the frontend sends, the DB gets 'Mpesa'
+    // ✅ Normalize MPesa naming
     if (method.toLowerCase().includes('mpesa') || method.toLowerCase().includes('m-pesa')) {
         method = 'MPesa';
     }
 
-    if (method === 'Complimentary') {
-    finalPrice = amount; 
-    } else if (method === 'Credit') {
+    // ✅ Handle special cases
+    if (method === 'Credit') {
         paymentStatus = 'Unpaid';
     }
 
-    const sql = `INSERT INTO sales (client_name, total_price, payment_status, payment_method, customer_id, sale_date) 
-                 VALUES (?, ?, ?, ?, ?, NOW())`;
+    if (method === 'Complimentary') {
+        finalPrice = 0;
+    }
 
-                 // ✅ WALLET VALIDATION (ADD THIS HERE)
+    const sql = `
+        INSERT INTO sales 
+        (client_name, total_price, payment_status, payment_method, customer_id, sale_date) 
+        VALUES (?, ?, ?, ?, ?, NOW())
+    `;
 
+    // ✅ WALLET VALIDATION
+    if (method === 'Advance' && customerId) {
+        return db.query(
+            "SELECT wallet_balance FROM customers WHERE customer_id = ?",
+            [customerId],
+            (err, result) => {
 
-    db.query(sql, [clientName, finalPrice, paymentStatus, method, customerId || null], (err, result) => {
-        if (err) return res.status(500).json({ success: false, error: err.message });
+                if (err || result.length === 0) {
+                    return res.status(500).json({ error: "Customer not found" });
+                }
 
-        const saleId = result.insertId;
-        
-const priceMap = {};
-cleanedItems.forEach(i => {
-    priceMap[i.product_name] = i.price;
-});
+                if (result[0].wallet_balance < finalPrice) {
+                    return res.status(400).json({ error: "Insufficient wallet balance" });
+                }
 
-    const itemValues = Array.isArray(cleanedItems)
-    ? cleanedItems
-        .filter(i => i && i.product_name)
-        .map(item => [
-    saleId,
-    item.product_name,
-    item.qty || 0,
-    priceMap[item.product_name] || item.price || 0
-])
-    : [];
-        const itemSql = `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`;
+                processSale(); // ✅ continue safely
+            }
+        );
+    }
 
-        db.query(itemSql, [itemValues], (itemErr) => {
-            if (itemErr) return res.status(500).json({ success: false });
+    // ✅ Normal flow
+    processSale();
 
-            if (method === 'Advance' && customerId) {
+    function processSale() {
+        db.query(sql, [clientName, finalPrice, paymentStatus, method, customerId || null], (err, result) => {
 
-    db.query(
-        "UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?",
-        [finalPrice, customerId],
-        (walletErr) => {
-
-            if (walletErr) {
-                console.error(walletErr);
+            if (err) {
+                console.error("SALE INSERT ERROR:", err);
+                return res.status(500).json({ success: false, error: err.message });
             }
 
-            // Get updated balance
+            const saleId = result.insertId;
+
+            const itemValues = cleanedItems.map(item => [
+                saleId,
+                item.product_name,
+                item.qty || 0,
+                item.price || 0
+            ]);
+
             db.query(
-                "SELECT wallet_balance FROM customers WHERE customer_id = ?",
-                [customerId],
-                (balErr, balResult) => {
+                `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`,
+                [itemValues],
+                (itemErr) => {
 
-                    if (!balErr && balResult.length > 0) {
-
-                        const newBalance = balResult[0].wallet_balance;
-
-                        db.query(
-    `INSERT INTO wallet_transactions
-    (customer_id, customer_name, type, amount, balance_after, reference)
-    VALUES (?, ?, 'WITHDRAWAL', ?, ?, ?)`,
-    [
-        customerId,
-        clientName,
-        finalPrice,   // ✅ use finalPrice HERE
-        newBalance,
-        `Food Purchase`
-    ]
-);
+                    if (itemErr) {
+                        console.error("ITEM INSERT ERROR:", itemErr);
+                        return res.status(500).json({ success: false });
                     }
+
+                    // ✅ WALLET DEDUCTION
+                    if (method === 'Advance' && customerId) {
+                        db.query(
+                            "UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?",
+                            [finalPrice, customerId]
+                        );
+                    }
+
+                    // ✅ CREDIT UPDATE
+                    if (method === 'Credit' && customerId) {
+                        db.query(
+                            "UPDATE customers SET credit_balance = credit_balance + ? WHERE customer_id = ?",
+                            [finalPrice, customerId]
+                        );
+                    }
+
+                    // ✅ STOCK DEDUCTION
+                    if (stockItems.length > 0) {
+                        cookItems(stockItems);
+                        deductStockWithYield(stockItems, `Sale (${method})`);
+                    }
+
+                    res.json({ success: true, saleId });
                 }
             );
-        }
-    );
-}
-            if (method === 'Credit' && customerId) {
-                db.query("UPDATE customers SET credit_balance = credit_balance + ? WHERE customer_id = ?", [amount, customerId]);
-            }
-
-            let reason = (method === 'Complimentary') ? 'Staff/Owner Meal' : `Sale (${method})`;
-            paymentStatus = 'Completed';
-            // ALWAYS deduct stock for ALL completed sales
-if (stockItems && stockItems.length > 0) {
-    cookItems(stockItems);
-    deductStockWithYield(stockItems, `Sale (${method})`);
-}
-
-            res.json({ success: true, saleId });
         });
-    });
+    }
 });
 
 // 4. CALLBACK
