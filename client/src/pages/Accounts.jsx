@@ -172,6 +172,48 @@ const Accounts = () => {
                 />
             </div>
 
+            <div className="summary-cards">
+
+    {/* TOTAL WALLET */}
+    <div className="summary-card wallet-card">
+        <h3>Total Wallet Balance</h3>
+        <h1>KSh {totalWallet.toLocaleString()}</h1>
+
+        <div className="summary-breakdown">
+            {customers
+                .filter(c => parseFloat(c.wallet_balance) > 0)
+                .map(c => (
+                    <div key={c.customer_id} className="summary-line">
+                        <span>{c.full_name}</span>
+                        <strong>
+                            KSh {parseFloat(c.wallet_balance).toLocaleString()}
+                        </strong>
+                    </div>
+                ))}
+        </div>
+    </div>
+
+    {/* TOTAL CREDIT */}
+    <div className="summary-card credit-card">
+        <h3>Total Credit Outstanding</h3>
+        <h1>KSh {totalDebt.toLocaleString()}</h1>
+
+        <div className="summary-breakdown">
+            {customers
+                .filter(c => parseFloat(c.credit_balance) > 0)
+                .map(c => (
+                    <div key={c.customer_id} className="summary-line">
+                        <span>{c.full_name}</span>
+                        <strong>
+                            KSh {parseFloat(c.credit_balance).toLocaleString()}
+                        </strong>
+                    </div>
+                ))}
+        </div>
+    </div>
+
+</div>
+
             <div className="accounts-grid">
                 {filteredCustomers.map(customer => (
                     <div key={customer.customer_id} className="customer-card">

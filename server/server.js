@@ -381,37 +381,75 @@ app.post('/api/customers/create', (req, res) => {
 });
 
 // TOP-UP WALLET (Handling the Advance Payment)
+// TOP-UP WALLET
 app.put('/api/customers/topup', (req, res) => {
+
     const { customer_id, amount, clientName } = req.body;
+
     const topupAmount = parseFloat(amount);
 
-    // 1. Get current balances
-    db.query("SELECT credit_balance, wallet_balance FROM customers WHERE customer_id = ?", [customer_id], (err, results) => {
-        if (err || results.length === 0) return res.status(500).json({ error: "Customer not found" });
+    db.query(
+        "SELECT credit_balance, wallet_balance FROM customers WHERE customer_id = ?",
+        [customer_id],
+        (err, results) => {
 
-        let debt = parseFloat(results[0].credit_balance || 0);
-        let wallet = parseFloat(results[0].wallet_balance || 0);
-        let newDebt = Math.max(0, debt - topupAmount);
-        let newWallet = topupAmount > debt ? (topupAmount - debt) + wallet : wallet;
-
-        // 2. Update Customer Balances
-        db.query(
-            "UPDATE customers SET credit_balance=?, wallet_balance=? WHERE customer_id=?",
-            [newDebt, newWallet, customer_id],
-            (err2) => {
-                if (err2) return res.status(500).json(err2);
-
-                // 3. ONLY ONE ENTRY in Sales table, marked as 'Topup'
-                // This ensures it doesn't get confused with a 'Food Sale'
-                db.query(`
-                    INSERT INTO sales (client_name, total_price, payment_status, payment_method, sale_date)
-                    VALUES (?, ?, 'Completed', 'Wallet', NOW())
-                `, [`Deposit: ${clientName}`, topupAmount], (err3) => {
-                    res.json({ success: true });
-                });
+            if (err || results.length === 0) {
+                return res.status(500).json({ error: "Customer not found" });
             }
-        );
-    });
+
+            let debt = parseFloat(results[0].credit_balance || 0);
+            let wallet = parseFloat(results[0].wallet_balance || 0);
+
+            // Clear debt first
+            let debtCleared = Math.min(debt, topupAmount);
+
+            let newDebt = debt - debtCleared;
+
+            let walletAddition = topupAmount - debtCleared;
+
+            let newWallet = wallet + walletAddition;
+
+            db.query(
+                `UPDATE customers 
+                 SET credit_balance = ?, wallet_balance = ?
+                 WHERE customer_id = ?`,
+                [newDebt, newWallet, customer_id],
+                (err2) => {
+
+                    if (err2) {
+                        return res.status(500).json(err2);
+                    }
+
+                    // LOG WALLET TRANSACTION
+                    db.query(
+                        `INSERT INTO wallet_transactions
+                        (customer_id, customer_name, type, amount, balance_after, reference)
+                        VALUES (?, ?, 'DEPOSIT', ?, ?, ?)`,
+                        [
+                            customer_id,
+                            clientName,
+                            topupAmount,
+                            newWallet,
+                            `Wallet Topup`
+                        ],
+                        (err3) => {
+
+                            if (err3) {
+                                console.error(err3);
+                                return res.status(500).json(err3);
+                            }
+
+                            res.json({
+                                success: true,
+                                wallet_balance: newWallet,
+                                credit_balance: newDebt
+                            });
+                        }
+                    );
+                }
+            );
+        }
+    );
 });
 
 // ✅ NEW: Get Total Outstanding Credit across all customers
@@ -614,13 +652,43 @@ app.post('/api/pay/unified', (req, res) => {
             if (itemErr) return res.status(500).json({ success: false });
 
             if (method === 'Advance' && customerId) {
-                db.query("UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?", [amount, customerId]);
+
+    db.query(
+        "UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?",
+        [amount, customerId],
+        (walletErr) => {
+
+            if (walletErr) {
+                console.error(walletErr);
             }
-            if (!customerId && method === 'Credit') {
-    return res.status(400).json({
-        success: false,
-        error: "Customer required for credit"
-    });
+
+            // Get updated balance
+            db.query(
+                "SELECT wallet_balance FROM customers WHERE customer_id = ?",
+                [customerId],
+                (balErr, balResult) => {
+
+                    if (!balErr && balResult.length > 0) {
+
+                        const newBalance = balResult[0].wallet_balance;
+
+                        db.query(
+                            `INSERT INTO wallet_transactions
+                            (customer_id, customer_name, type, amount, balance_after, reference)
+                            VALUES (?, ?, 'WITHDRAWAL', ?, ?, ?)`,
+                            [
+                                customerId,
+                                clientName,
+                                amount,
+                                newBalance,
+                                `Food Purchase`
+                            ]
+                        );
+                    }
+                }
+            );
+        }
+    );
 }
             if (method === 'Credit' && customerId) {
                 db.query("UPDATE customers SET credit_balance = credit_balance + ? WHERE customer_id = ?", [amount, customerId]);
