@@ -617,6 +617,27 @@ app.post('/api/pay/unified', (req, res) => {
     let finalPrice = amount;
     let paymentStatus = 'Completed'; 
 
+     // ✅ WALLET VALIDATION (ADD THIS HERE)
+    if (method === 'Advance' && customerId) {
+    return db.query(
+        "SELECT wallet_balance FROM customers WHERE customer_id = ?",
+        [customerId],
+        (err, result) => {
+
+            if (err || result.length === 0) {
+                return res.status(500).json({ error: "Customer not found" });
+            }
+
+            if (result[0].wallet_balance < finalPrice) {
+                return res.status(400).json({ error: "Insufficient wallet balance" });
+            }
+
+            // ✅ ONLY NOW continue with sale
+            proceedWithSale();
+        }
+    );
+}
+
     // ✅ STRENGTHENED NORMALIZATION
     // This ensures that no matter what the frontend sends, the DB gets 'Mpesa'
     if (method.toLowerCase().includes('mpesa') || method.toLowerCase().includes('m-pesa')) {
@@ -632,20 +653,28 @@ app.post('/api/pay/unified', (req, res) => {
     const sql = `INSERT INTO sales (client_name, total_price, payment_status, payment_method, customer_id, sale_date) 
                  VALUES (?, ?, ?, ?, ?, NOW())`;
 
+                 // ✅ WALLET VALIDATION (ADD THIS HERE)
+
+
     db.query(sql, [clientName, finalPrice, paymentStatus, method, customerId || null], (err, result) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
 
         const saleId = result.insertId;
         
+const priceMap = {};
+cleanedItems.forEach(i => {
+    priceMap[i.product_name] = i.price;
+});
+
     const itemValues = Array.isArray(cleanedItems)
     ? cleanedItems
         .filter(i => i && i.product_name)
         .map(item => [
-            saleId,
-            item.product_name,
-            item.qty || 0,
-            item.price || 0
-        ])
+    saleId,
+    item.product_name,
+    item.qty || 0,
+    priceMap[item.product_name] || item.price || 0
+])
     : [];
         const itemSql = `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`;
 
@@ -656,7 +685,7 @@ app.post('/api/pay/unified', (req, res) => {
 
     db.query(
         "UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?",
-        [amount, customerId],
+        [finalPrice, customerId],
         (walletErr) => {
 
             if (walletErr) {
@@ -674,17 +703,17 @@ app.post('/api/pay/unified', (req, res) => {
                         const newBalance = balResult[0].wallet_balance;
 
                         db.query(
-                            `INSERT INTO wallet_transactions
-                            (customer_id, customer_name, type, amount, balance_after, reference)
-                            VALUES (?, ?, 'WITHDRAWAL', ?, ?, ?)`,
-                            [
-                                customerId,
-                                clientName,
-                                amount,
-                                newBalance,
-                                `Food Purchase`
-                            ]
-                        );
+    `INSERT INTO wallet_transactions
+    (customer_id, customer_name, type, amount, balance_after, reference)
+    VALUES (?, ?, 'WITHDRAWAL', ?, ?, ?)`,
+    [
+        customerId,
+        clientName,
+        finalPrice,   // ✅ use finalPrice HERE
+        newBalance,
+        `Food Purchase`
+    ]
+);
                     }
                 }
             );
@@ -881,7 +910,7 @@ app.get('/api/reports/sales-summary', async (req, res) => {
   product_name, 
   SUM(qty) as total_qty, 
   MAX(price) as price, 
-  SUM(qty * price) as total_revenue
+  SUM(si.qty * COALESCE(si.price, 0)) as total_revenue
 FROM sales_items si
 JOIN sales s ON si.sale_id = s.id
 WHERE DATE(s.sale_date) = ?
@@ -992,8 +1021,9 @@ app.get('/api/reports/advanced-summary', (req, res) => {
         FROM sales
         WHERE payment_status = 'Completed'
 AND (
-    LOWER(payment_method) LIKE '%cash%'
+    LOWER(payment_method) LIKE '%cash%' 
     OR LOWER(payment_method) LIKE '%mpesa%'
+    OR LOWER(payment_method) LIKE '%advance%'
 )
         GROUP BY DATE(sale_date)
         ORDER BY date DESC

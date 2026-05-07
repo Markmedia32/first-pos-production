@@ -70,7 +70,10 @@ const [rangeData, setRangeData] = useState(null);
   // --- CALCULATIONS ---
   const totalExpenses = expenses.reduce((acc, exp) => acc + (parseFloat(exp.amount) || 0), 0);
   
-  const actualCashInflow = (paymentMethods.Cash || 0) + (paymentMethods.MPesa || 0);
+ const actualCashInflow =
+  (paymentMethods.Cash || 0) +
+  (paymentMethods.MPesa || 0) +
+  (paymentMethods.Wallet || 0);
 
   const netCashAtHand = actualCashInflow - totalExpenses;
   const dailyRevenue = actualCashInflow;
