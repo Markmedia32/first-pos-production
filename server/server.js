@@ -639,24 +639,39 @@ app.post('/api/pay/unified', (req, res) => {
     `;
 
     // ✅ WALLET VALIDATION
-    if (method === 'Advance' && customerId) {
-        return db.query(
-            "SELECT wallet_balance FROM customers WHERE customer_id = ?",
-            [customerId],
-            (err, result) => {
+    // ✅ WALLET VALIDATION (FIXED)
+if (method === 'Advance' && customerId) {
 
-                if (err || result.length === 0) {
-                    return res.status(500).json({ error: "Customer not found" });
-                }
+    return db.query(
+        "SELECT wallet_balance FROM customers WHERE customer_id = ?",
+        [customerId],
+        (err, result) => {
 
-                if (result[0].wallet_balance < finalPrice) {
-                    return res.status(400).json({ error: "Insufficient wallet balance" });
-                }
-
-                processSale(); // ✅ continue safely
+            if (err) {
+                console.error("Wallet query error:", err);
+                return res.status(500).json({ error: "Database error checking wallet" });
             }
-        );
-    }
+
+            if (!result || result.length === 0) {
+                return res.status(404).json({ error: "Customer not found" });
+            }
+
+            const walletBalance = parseFloat(result[0].wallet_balance || 0);
+            const amountToPay = parseFloat(finalPrice || 0);
+
+            if (walletBalance < amountToPay) {
+                return res.status(400).json({ 
+                    error: "Insufficient wallet balance",
+                    wallet: walletBalance,
+                    required: amountToPay
+                });
+            }
+
+            // ✅ continue safely
+            processSale();
+        }
+    );
+}
 
     // ✅ Normal flow
     processSale();
