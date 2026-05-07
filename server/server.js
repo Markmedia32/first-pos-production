@@ -641,40 +641,31 @@ app.post('/api/pay/unified', (req, res) => {
     // ✅ WALLET VALIDATION
     // ✅ WALLET VALIDATION (FIXED)
 if (method === 'Advance' && customerId) {
-
     return db.query(
         "SELECT wallet_balance FROM customers WHERE customer_id = ?",
         [customerId],
         (err, result) => {
-
-            if (err) {
-                console.error("Wallet query error:", err);
-                return res.status(500).json({ error: "Database error checking wallet" });
-            }
-
-            if (!result || result.length === 0) {
-                return res.status(404).json({ error: "Customer not found" });
-            }
+            if (err) return res.status(500).json({ error: "Database error checking wallet" });
+            if (!result || result.length === 0) return res.status(404).json({ error: "Customer not found" });
 
             const walletBalance = parseFloat(result[0].wallet_balance || 0);
             const amountToPay = parseFloat(finalPrice || 0);
 
             if (walletBalance < amountToPay) {
-                return res.status(400).json({ 
+                return res.status(400).json({
                     error: "Insufficient wallet balance",
                     wallet: walletBalance,
                     required: amountToPay
                 });
             }
 
-            // ✅ continue safely
-            processSale();
+            processSale(); // ✅ Only called INSIDE the callback now
         }
     );
-}
-
-    // ✅ Normal flow
+} else {
+    // ✅ All other payment methods go here directly
     processSale();
+}
 
     function processSale() {
         db.query(sql, [clientName, finalPrice, paymentStatus, method, customerId || null], (err, result) => {
