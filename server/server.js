@@ -1254,19 +1254,19 @@ app.get('/api/reports/date-range', (req, res) => {
     `;
 
     db.query(itemizedSql, [from, to], async (err, items) => {
-        if (err) {
-            console.error("ITEM QUERY ERROR:", err);
-            return res.status(500).json({ error: "Item query failed" });
+    if (err) {
+        console.error("ITEM QUERY ERROR:", err);
+        return res.status(500).json({ error: "Item query failed" });
+    }
+
+    // ✅ EXPAND COMBO MEALS
+    const expandedItems = await expandComboForReports(items);
+
+    db.query(paymentsSql, [from, to], (err2, paymentsRaw) => {
+        if (err2) {
+            console.error("PAYMENT QUERY ERROR:", err2);
+            return res.status(500).json({ error: "Payment query failed" });
         }
-
-        db.query(paymentsSql, [from, to], (err2, paymentsRaw) => {
-            if (err2) {
-                console.error("PAYMENT QUERY ERROR:", err2);
-                return res.status(500).json({ error: "Payment query failed" });
-            }
-
-            // ✅ EXPAND COMBO MEALS
-const expandedItems = await expandComboForReports(items);
 
             const payments = {
                 Cash: 0,
