@@ -826,7 +826,7 @@ const Inventory = () => {
 
       <div style={{ padding: '16px 32px', textAlign: 'center' }}>
         <span style={{ fontSize: 11, color: '#c4c9d4', fontWeight: 600, letterSpacing: '0.5px' }}>
-          PROPERTY FLOW POS · CODEY CRAFT AFRICA
+          First Class POS · CODEY CRAFT AFRICA
         </span>
       </div>
     </div>

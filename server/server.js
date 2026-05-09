@@ -1489,6 +1489,81 @@ app.post('/api/kitchen/cook', (req, res) => {
     });
 });
 
+app.get('/api/customers/:id/statement', (req, res) => {
+    const customerId = req.params.id;
+    const sql = `
+        SELECT 
+            s.id as sale_id,
+            s.sale_date,
+            s.payment_method,
+            s.payment_status,
+            si.product_name,
+            si.qty,
+            si.price
+        FROM sales s
+        JOIN sales_items si ON s.id = si.sale_id
+        WHERE s.customer_id = ?
+        ORDER BY s.sale_date DESC
+        LIMIT 100
+    `;
+    db.query(sql, [customerId], (err, results) => {
+        if (err) return res.status(500).json(err);
+        res.json(results);
+    });
+});
+
+app.get('/api/customers/:id/wallet-history', (req, res) => {
+    const customerId = req.params.id;
+ 
+    // First try the wallet_transactions table
+    const sql = `
+        SELECT 
+            id,
+            customer_id,
+            customer_name,
+            type,
+            amount,
+            balance_after,
+            reference,
+            created_at
+        FROM wallet_transactions
+        WHERE customer_id = ?
+        ORDER BY created_at DESC
+        LIMIT 50
+    `;
+ 
+    db.query(sql, [customerId], (err, results) => {
+        if (err) {
+            // If table doesn't exist yet, return empty array gracefully
+            console.warn("wallet_transactions table error:", err.message);
+            return res.json([]);
+        }
+        res.json(results);
+    });
+});
+
+app.get('/api/reports/customer-orders/:id', (req, res) => {
+    const customerId = req.params.id;
+    const sql = `
+        SELECT 
+            si.product_name,
+            SUM(si.qty) as total_qty,
+            MAX(si.price) as price,
+            SUM(si.qty * si.price) as total_revenue,
+            MAX(s.sale_date) as created_at,
+            s.payment_method
+        FROM sales s
+        JOIN sales_items si ON s.id = si.sale_id
+        WHERE s.customer_id = ?
+        GROUP BY si.product_name, s.payment_method
+        ORDER BY total_revenue DESC
+    `;
+    db.query(sql, [customerId], (err, results) => {
+        if (err) return res.status(500).json(err);
+        res.json(results);
+    });
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
