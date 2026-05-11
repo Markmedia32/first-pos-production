@@ -1061,10 +1061,13 @@ app.get('/api/reports/monthly-cumulative', (req, res) => {
     SELECT COALESCE(SUM(total_price), 0) as total_revenue 
     FROM sales 
     WHERE DATE_FORMAT(sale_date, '%Y-%m') = ? 
-    AND payment_status = 'Completed'
+    AND payment_status != 'Pending'
+    AND payment_method != 'InternalAdjustment'
     AND (
         LOWER(payment_method) LIKE '%cash%' 
         OR LOWER(payment_method) LIKE '%mpesa%'
+        OR LOWER(payment_method) LIKE '%advance%'
+        OR LOWER(payment_method) LIKE '%wallet%'
     )
 `;
 
