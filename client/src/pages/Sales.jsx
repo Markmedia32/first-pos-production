@@ -15,6 +15,7 @@ const Sales = () => {
   MPesa: 0,
   Wallet: 0,
   Complimentary: 0,
+  Credit: 0,
   CreditCard: 0
 });
 const [fromDate, setFromDate] = useState('');
@@ -32,6 +33,7 @@ const [rangeData, setRangeData] = useState(null);
   (paymentMethods.Cash || 0) +
   (paymentMethods.MPesa || 0) +
   (paymentMethods.Wallet || 0) +
+  (paymentMethods.Credit || 0);
   (paymentMethods.Complimentary || 0);
 
   useEffect(() => {
@@ -396,39 +398,53 @@ console.log("REPORT DATA:", res.data);
           </div>
         </div>
 
-        <div className="report-card" style={{ display: 'flex', gap: '30px', marginBottom: '30px', padding: '15px 30px', background: '#fafafa', borderRadius: '15px', border: '1px solid #eee' }}>
-  <span>DAILY COLLECTION:</span>
+        <div className="report-card" style={{
+  display: 'flex',
+  flexWrap: 'wrap',          // ← was overflowing, now wraps
+  gap: '12px 24px',
+  marginBottom: '30px',
+  padding: '15px 30px',
+  background: '#fafafa',
+  borderRadius: '15px',
+  border: '1px solid #eee',
+  alignItems: 'center'
+}}>
+  <span style={{ fontWeight: 800, fontSize: '0.85rem', color: '#374151' }}>DAILY COLLECTION:</span>
 
-<span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}>
-  <BarChart3 size={16} />
-  Total Sales: Ksh {totalSales.toLocaleString()}
-</span>
+  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold', color: '#0071e3' }}>
+    <BarChart3 size={16} />
+    Total Sales: Ksh {totalSales.toLocaleString()}
+  </span>
 
   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-  <Banknote size={16} /> 
-  Cash: <b>{paymentMethods.Cash?.toLocaleString()}</b>
-</span>
+    <Banknote size={16} />
+    Cash: <b>{(paymentMethods.Cash || 0).toLocaleString()}</b>
+  </span>
 
-<span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-  <Smartphone size={16} /> 
-  M-Pesa: <b>{paymentMethods.MPesa?.toLocaleString()}</b>
-</span>
+  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+    <Smartphone size={16} />
+    M-Pesa: <b>{(paymentMethods.MPesa || 0).toLocaleString()}</b>
+  </span>
 
-<span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-  <Wallet size={16} /> 
-  Wallet: <b>{paymentMethods.Wallet?.toLocaleString()}</b>
-</span>
+  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+    <Wallet size={16} />
+    Wallet: <b>{(paymentMethods.Wallet || 0).toLocaleString()}</b>
+  </span>
 
-<span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#7e22ce' }}>
-  <Gift size={16} /> 
-  Complimentary: <b>{paymentMethods.Complimentary?.toLocaleString()}</b>
-</span>
+  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#7e22ce' }}>
+    <Gift size={16} />
+    Comp: <b>{(paymentMethods.Complimentary || 0).toLocaleString()}</b>
+  </span>
 
-<span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-  <CreditCard size={16} /> 
-  Card: <b>{paymentMethods.CreditCard?.toLocaleString()}</b>
-</span>
+  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#dc2626' }}>
+    <CreditCard size={16} />
+    Credit: <b>{(paymentMethods.Credit || 0).toLocaleString()}</b>
+  </span>
 
+  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+    <CreditCard size={16} />
+    Card: <b>{(paymentMethods.CreditCard || 0).toLocaleString()}</b>
+  </span>
 </div>
 
 <div className="report-card range-card">

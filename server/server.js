@@ -945,7 +945,9 @@ const expandedItems = await expandComboForReports(itemResults);
         payments.Wallet += amount;
     } else if (method === 'Complimentary') {
         payments.Complimentary += amount;
-    } else if (method === 'CreditCard') {
+        } else if (method === 'Credit') {
+    payments.Credit = (payments.Credit || 0) + amount;
+        } else if (method === 'CreditCard') {
     payments.CreditCard += amount;
 }
 });
@@ -1373,6 +1375,7 @@ app.get('/api/reports/date-range', (req, res) => {
                 MPesa: 0,
                 Wallet: 0,
                 Complimentary: 0,
+                Credit: 0,
                 CreditCard: 0
             };
 
@@ -1385,6 +1388,7 @@ app.get('/api/reports/date-range', (req, res) => {
                 else if (method && method.toLowerCase().includes('mpesa')) payments.MPesa += amount;
                 else if (method === 'Advance') payments.Wallet += amount;
                 else if (method === 'Complimentary') payments.Complimentary += amount;
+                else if (method === 'Credit') payments.Credit += amount;
                 else if (method === 'CreditCard') payments.CreditCard += amount;
             });
 
@@ -1393,6 +1397,7 @@ app.get('/api/reports/date-range', (req, res) => {
                 payments.MPesa +
                 payments.Wallet +
                 payments.Complimentary +
+                payments.Credit +
                 payments.CreditCard;
 
                 // ✅ FINAL SMART GROUPING
