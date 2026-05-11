@@ -529,8 +529,10 @@ console.log("REPORT DATA:", res.data);
             </tbody>
             <tfoot style={{ background: '#f9fafb', fontWeight: 'bold' }}>
               <tr>
-                <td colSpan="3" style={{ padding: '20px 15px', color: '#1d1d1f' }}>GROSS TOTAL (REALIZED CASH)</td>
-                <td style={{ textAlign: 'right', padding: '20px 15px', fontSize: '1.2rem', color: '#0071e3' }}>Ksh {dailyRevenue.toLocaleString()}</td>
+                <td colSpan="3" style={{ padding: '20px 15px', color: '#1d1d1f' }}>GROSS TOTAL (ALL SALES)</td>
+                <td style={{ textAlign: 'right', padding: '20px 15px', fontSize: '1.2rem', color: '#0071e3' }}>
+  Ksh {totalSales.toLocaleString()}
+</td>
               </tr>
             </tfoot>
           </table>
