@@ -5,168 +5,118 @@ const axios = require('axios');
 const datetime = require('node-datetime');
 const db = require('./db');
 require('dotenv').config();
-let cookedStock = {};
 
-// ✅ FIX: Split combo meals like "Chapati Beans" into individual items
-// ✅ SPLIT COMBO ITEMS (FOR STOCK LOGIC)
+// ─────────────────────────────────────────
+// COMBO HELPERS
+// ─────────────────────────────────────────
+
 const splitComboItems = (items) => {
     const expanded = [];
-
     items.forEach(item => {
         const name = item.product_name.toLowerCase();
-
         if (name.includes("chapati beans")) {
-            expanded.push(
-                { product_name: "Chapati", qty: item.qty * 2, price: 0 },
-                { product_name: "Beans", qty: item.qty, price: 0 }
-            );
-        }
-        else if (name.includes("chapati ndengu")) {
-            expanded.push(
-                { product_name: "Chapati", qty: item.qty * 2, price: 0 },
-                { product_name: "Ndengu", qty: item.qty, price: 0 }
-            );
-        } 
-        else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
-    expanded.push(
-        { product_name: "Rice", qty: item.qty, price: 0 },
-        { product_name: "Ndengu", qty: item.qty, price: 0 }
-    );
-}
-        else {
+            expanded.push({ product_name: "Chapati", qty: item.qty * 2, price: 0 });
+            expanded.push({ product_name: "Beans",   qty: item.qty,     price: 0 });
+        } else if (name.includes("chapati ndengu")) {
+            expanded.push({ product_name: "Chapati", qty: item.qty * 2, price: 0 });
+            expanded.push({ product_name: "Ndengu",  qty: item.qty,     price: 0 });
+        } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
+            expanded.push({ product_name: "Rice",   qty: item.qty, price: 0 });
+            expanded.push({ product_name: "Ndengu", qty: item.qty, price: 0 });
+        } else {
             expanded.push(item);
         }
     });
-
     return expanded;
 };
 
-
-// ✅ EXPAND COMBO FOR REPORTS (FOR SALES SUMMARY UI)
 const expandComboForReports = async (items) => {
     return new Promise((resolve, reject) => {
-
-        // 1. Fetch ALL menu prices first
-       db.query("SELECT product_name, price FROM menu_items", (err, menu) => {
+        db.query("SELECT product_name, price FROM menu_items", (err, menu) => {
             if (err) return reject(err);
-
-            // Create price map
             const priceMap = {};
-            menu.forEach(m => {
-                priceMap[m.product_name.toLowerCase()] = Number(m.price);
-            });
+            menu.forEach(m => { priceMap[m.product_name.toLowerCase()] = Number(m.price); });
 
             const expanded = [];
-
             items.forEach(item => {
                 const name = item.product_name.toLowerCase();
-                const qty = Number(item.total_qty || 0);
+                const qty  = Number(item.total_qty || 0);
 
-                // ✅ CHAPATI BEANS
                 if (name.includes("chapati beans")) {
-
-                    const chapatiPrice = priceMap["chapati"] || 0;
-                    const beansPrice = priceMap["beans"] || 0;
-
-                    expanded.push({
-                        product_name: "Chapati",
-                        total_qty: qty * 2,
-                        price: chapatiPrice,
-                        total_revenue: chapatiPrice * (qty * 2)
-                    });
-
-                    expanded.push({
-                        product_name: "Beans",
-                        total_qty: qty,
-                        price: beansPrice,
-                        total_revenue: beansPrice * qty
-                    });
-                }
-
-                // ✅ CHAPATI NDENGU
-                else if (name.includes("chapati ndengu")) {
-
-                    const chapatiPrice = priceMap["chapati"] || 0;
-                    const ndenguPrice = priceMap["ndengu"] || 0;
-
-                    expanded.push({
-                        product_name: "Chapati",
-                        total_qty: qty * 2,
-                        price: chapatiPrice,
-                        total_revenue: chapatiPrice * (qty * 2)
-                    });
-
-                    expanded.push({
-                        product_name: "Ndengu",
-                        total_qty: qty,
-                        price: ndenguPrice,
-                        total_revenue: ndenguPrice * qty
-                    });
-                }
-else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
-
-    const ricePrice = priceMap["rice"] || 0;
-    const ndenguPrice = priceMap["ndengu"] || 0;
-
-    expanded.push({
-        product_name: "Rice",
-        total_qty: qty,
-        price: ricePrice,
-        total_revenue: ricePrice * qty
-    });
-
-    expanded.push({
-        product_name: "Ndengu",
-        total_qty: qty,
-        price: ndenguPrice,
-        total_revenue: ndenguPrice * qty
-    });
-}
-                
-
-                // ✅ NORMAL ITEMS
-                else {
+                    expanded.push({ product_name: "Chapati", total_qty: qty * 2, price: priceMap["chapati"] || 0, total_revenue: (priceMap["chapati"] || 0) * qty * 2 });
+                    expanded.push({ product_name: "Beans",   total_qty: qty,     price: priceMap["beans"]   || 0, total_revenue: (priceMap["beans"]   || 0) * qty });
+                } else if (name.includes("chapati ndengu")) {
+                    expanded.push({ product_name: "Chapati", total_qty: qty * 2, price: priceMap["chapati"] || 0, total_revenue: (priceMap["chapati"] || 0) * qty * 2 });
+                    expanded.push({ product_name: "Ndengu",  total_qty: qty,     price: priceMap["ndengu"]  || 0, total_revenue: (priceMap["ndengu"]  || 0) * qty });
+                } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
+                    expanded.push({ product_name: "Rice",   total_qty: qty, price: priceMap["rice"]   || 0, total_revenue: (priceMap["rice"]   || 0) * qty });
+                    expanded.push({ product_name: "Ndengu", total_qty: qty, price: priceMap["ndengu"] || 0, total_revenue: (priceMap["ndengu"] || 0) * qty });
+                } else {
                     expanded.push(item);
                 }
             });
-
             resolve(expanded);
         });
     });
 };
 
-const app = express();
+const normalizePaymentMethod = (method) => {
+    if (!method) return '';
+    const m = method.toLowerCase();
+    if (m.includes('mpesa') || m.includes('m-pesa')) return 'MPesa';
+    if (m.includes('cash'))        return 'Cash';
+    if (m.includes('advance'))     return 'Advance';
+    if (m.includes('credit'))      return 'Credit';
+    if (m.includes('compliment'))  return 'Complimentary';
+    return method;
+};
 
-// Middleware
+// ─────────────────────────────────────────
+// APP SETUP
+// ─────────────────────────────────────────
+
+const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Database Connection
-
-// Test Database Connection
 db.getConnection((err, connection) => {
-    if (err) {
-        console.error('Error connecting to MySQL:', err.message);
-    } else {
-        console.log('Connected to First Class Logistics Database successfully.');
-        connection.release();
-    }
+    if (err) console.error('Error connecting to MySQL:', err.message);
+    else { console.log('Connected to First Class Logistics Database successfully.'); connection.release(); }
 });
 
-// ✅ ADDED: LOCAL DATE FIX (IMPORTANT)
 const getLocalDate = () => {
     const now = new Date();
-    const offset = now.getTimezoneOffset();
-    const local = new Date(now.getTime() - (offset * 60000));
-    return local.toISOString().split('T')[0];
+    return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().split('T')[0];
 };
-// --- MPESA HELPERS ---
-const generateToken = async (req, res, next) => {
-    const key = process.env.MPESA_CONSUMER_KEY;
-    const secret = process.env.MPESA_CONSUMER_SECRET;
-    const auth = Buffer.from(`${key}:${secret}`).toString('base64');
 
+// ─────────────────────────────────────────
+// STOCK HELPERS  (Option A — never touch stock_quantity on sales)
+// ─────────────────────────────────────────
+
+// Only logs the sale for audit trail — does NOT update inventory table
+const logStockUsage = (items, reason = 'Sale') => {
+    items.forEach(item => {
+        const sql = `SELECT material_name, yield_per_unit FROM yield_rules WHERE menu_item_name = ?`;
+        db.query(sql, [item.product_name], (err, rules) => {
+            if (err) return console.error(err);
+            rules.forEach(rule => {
+                const kgUsed = item.qty / parseFloat(rule.yield_per_unit);
+                db.query(
+                    `INSERT INTO inventory_logs (item_name, qty, reason, created_at) VALUES (?, ?, ?, NOW())`,
+                    [rule.material_name, kgUsed, reason]
+                );
+            });
+        });
+    });
+};
+
+// ─────────────────────────────────────────
+// MPESA HELPERS
+// ─────────────────────────────────────────
+
+const generateToken = async (req, res, next) => {
+    const auth = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
     try {
         const { data } = await axios.get(
             "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
@@ -180,190 +130,59 @@ const generateToken = async (req, res, next) => {
     }
 };
 
-const deductStockWithYield = (items, reason = 'Sale') => {
-    items.forEach(item => {
+// ─────────────────────────────────────────
+// AUTH
+// ─────────────────────────────────────────
 
-        const sql = `
-            SELECT material_name, yield_per_unit
-            FROM yield_rules
-            WHERE menu_item_name = ?
-        `;
-
-        db.query(sql, [item.product_name], (err, rules) => {
-            if (err) return console.error(err);
-
-            if (!rules.length) {
-                // fallback direct deduction
-                db.query(
-                    "UPDATE inventory SET stock_quantity = stock_quantity - ? WHERE item_name = ?",
-                    [item.qty, item.product_name]
-                );
-                return;
-            }
-
-            rules.forEach(rule => {
-
-                const material = rule.material_name;
-                const yieldPerUnit = Number(rule.yield_per_unit);
-
-                // ✅ FIXED LOGIC
-                const materialUsed = item.qty * (1 / yieldPerUnit);
-
-                db.query(
-                    "UPDATE inventory SET stock_quantity = stock_quantity - ? WHERE item_name = ?",
-                    [materialUsed, material]
-                );
-
-                db.query(`
-                    INSERT INTO inventory_logs (item_name, qty, reason, created_at)
-                    VALUES (?, ?, ?, NOW())
-                `, [material, materialUsed, reason]);
-            });
-        });
-    });
-};
-
-const updateStockLevels = (items, reason = 'Sale') => {
-    items.forEach(item => {
-        db.query(
-            "UPDATE inventory SET stock_quantity = stock_quantity - ? WHERE item_name = ?",
-            [item.qty, item.product_name]
-        );
-
-        db.query(`
-            INSERT INTO inventory_logs (item_name, qty, reason, created_at)
-            VALUES (?, ?, ?, NOW())
-        `, [item.product_name, item.qty, reason]);
-    });
-};
-
-const safeDeductStock = (items, reason = 'Sale') => {
-    if (!items || items.length === 0) return;
-
-    try {
-        deductStockWithYield(items, reason);
-    } catch (err) {
-        console.error("Stock deduction failed:", err);
-    }
-};
-
-const cookItems = (items) => {
-    items.forEach(item => {
-
-        db.query(
-            `SELECT material_name, yield_per_unit 
-             FROM yield_rules 
-             WHERE menu_item_name = ?`,
-            [item.product_name],
-            (err, rules) => {
-
-                if (err || rules.length === 0) return;
-
-                rules.forEach(rule => {
-
-                    const cookedItem = item.product_name;
-                    const qtyCooked = item.qty; // plates sold or prepared
-
-                    if (!cookedStock[cookedItem]) {
-                        cookedStock[cookedItem] = 0;
-                    }
-
-                    // ADD cooked stock
-                    console.log("COOKED:", cookedItem, qtyCooked);
-
-                    console.log("COOKED STOCK UPDATED:", cookedStock);
-                });
-            }
-        );
-    });
-};
-
-// --- ROUTES ---
-
-// 1. Auth
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
-    const sql = `
-        SELECT users.id, users.username, roles.role_name 
-        FROM users 
-        JOIN roles ON users.role_id = roles.id 
-        WHERE users.username = ? AND users.password = ?
-    `;
-    db.query(sql, [username, password], (err, results) => {
-        if (err) return res.status(500).json({ success: false });
-        if (results.length > 0) {
-            res.json({
-                success: true,
-                user: { id: results[0].id, username: results[0].username, role: results[0].role_name }
-            });
-        } else {
-            res.status(401).json({ success: false });
+    db.query(
+        `SELECT users.id, users.username, roles.role_name FROM users JOIN roles ON users.role_id = roles.id WHERE users.username = ? AND users.password = ?`,
+        [username, password],
+        (err, results) => {
+            if (err) return res.status(500).json({ success: false });
+            if (results.length > 0) res.json({ success: true, user: { id: results[0].id, username: results[0].username, role: results[0].role_name } });
+            else res.status(401).json({ success: false });
         }
-    });
+    );
 });
 
-// Get all users and their roles (Admin Only)
-// Get all users (Admin Only)
 app.get('/api/admin/users', (req, res) => {
-    const role = req.headers['user-role']; 
-    
-    if (role !== 'Admin') {
-        return res.status(403).json({ message: "Access Denied" });
-    }
-
-    const sql = `
-        SELECT users.id, users.username, roles.role_name 
-        FROM users 
-        JOIN roles ON users.role_id = roles.id
-    `;
-    db.query(sql, (err, results) => {
+    if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ message: "Access Denied" });
+    db.query(`SELECT users.id, users.username, roles.role_name FROM users JOIN roles ON users.role_id = roles.id`, (err, results) => {
         if (err) return res.status(500).json(err);
         res.json(results);
     });
 });
 
-// Create a new user (Admin Only)
 app.post('/api/admin/create-user', (req, res) => {
     const { username, password, role_id } = req.body;
-    const sql = "INSERT INTO users (username, password, role_id) VALUES (?, ?, ?)";
-    
-    db.query(sql, [username, password, role_id], (err, result) => {
+    db.query("INSERT INTO users (username, password, role_id) VALUES (?, ?, ?)", [username, password, role_id], (err, result) => {
         if (err) return res.status(500).json(err);
         res.json({ success: true, message: "User created!" });
     });
 });
 
-// Reset User Password
 app.put('/api/admin/reset-password', (req, res) => {
-    const { userId, newPassword } = req.body;
-    const role = req.headers['user-role'];
-
-    if (role !== 'Admin') return res.status(403).json("Unauthorized");
-
-    const sql = "UPDATE users SET password = ? WHERE id = ?";
-    db.query(sql, [newPassword, userId], (err, result) => {
+    if (req.headers['user-role'] !== 'Admin') return res.status(403).json("Unauthorized");
+    db.query("UPDATE users SET password = ? WHERE id = ?", [req.body.newPassword, req.body.userId], (err) => {
         if (err) return res.status(500).json(err);
-        res.json({ success: true, message: "Password updated" });
+        res.json({ success: true });
     });
 });
 
-// Delete User
 app.delete('/api/admin/delete-user/:id', (req, res) => {
-    const userId = req.params.id;
-    const role = req.headers['user-role'];
-
-    if (role !== 'Admin') return res.status(403).json("Unauthorized");
-
-    const sql = "DELETE FROM users WHERE id = ?";
-    db.query(sql, [userId], (err, result) => {
+    if (req.headers['user-role'] !== 'Admin') return res.status(403).json("Unauthorized");
+    db.query("DELETE FROM users WHERE id = ?", [req.params.id], (err) => {
         if (err) return res.status(500).json(err);
-        res.json({ success: true, message: "User removed" });
+        res.json({ success: true });
     });
 });
 
-// --- 1.5 CUSTOMER & ACCOUNTS MANAGER ---
+// ─────────────────────────────────────────
+// CUSTOMERS
+// ─────────────────────────────────────────
 
-// Get all customers (for POS dropdown and Account Page)
 app.get('/api/customers', (req, res) => {
     db.query("SELECT * FROM customers ORDER BY full_name ASC", (err, results) => {
         if (err) return res.status(500).json(err);
@@ -371,119 +190,69 @@ app.get('/api/customers', (req, res) => {
     });
 });
 
-// Create new customer/staff/owner profile
 app.post('/api/customers/create', (req, res) => {
     const { full_name, customer_type, phone_number } = req.body;
-    const sql = "INSERT INTO customers (full_name, customer_type, phone_number) VALUES (?, ?, ?)";
-    db.query(sql, [full_name, customer_type, phone_number], (err, result) => {
+    db.query("INSERT INTO customers (full_name, customer_type, phone_number) VALUES (?, ?, ?)", [full_name, customer_type, phone_number], (err, result) => {
         if (err) return res.status(500).json(err);
         res.json({ success: true, id: result.insertId });
     });
 });
 
-// TOP-UP WALLET (Handling the Advance Payment)
-// TOP-UP WALLET
 app.put('/api/customers/topup', (req, res) => {
-
     const { customer_id, amount, clientName } = req.body;
-
     const topupAmount = parseFloat(amount);
-
-    db.query(
-        "SELECT credit_balance, wallet_balance FROM customers WHERE customer_id = ?",
-        [customer_id],
-        (err, results) => {
-
-            if (err || results.length === 0) {
-                return res.status(500).json({ error: "Customer not found" });
-            }
-
-            let debt = parseFloat(results[0].credit_balance || 0);
-            let wallet = parseFloat(results[0].wallet_balance || 0);
-
-            // Clear debt first
-            let debtCleared = Math.min(debt, topupAmount);
-
-            let newDebt = debt - debtCleared;
-
-            let walletAddition = topupAmount - debtCleared;
-
-            let newWallet = wallet + walletAddition;
-
+    db.query("SELECT credit_balance, wallet_balance FROM customers WHERE customer_id = ?", [customer_id], (err, results) => {
+        if (err || results.length === 0) return res.status(500).json({ error: "Customer not found" });
+        const debt   = parseFloat(results[0].credit_balance || 0);
+        const wallet = parseFloat(results[0].wallet_balance || 0);
+        const debtCleared  = Math.min(debt, topupAmount);
+        const newDebt      = debt - debtCleared;
+        const newWallet    = wallet + (topupAmount - debtCleared);
+        db.query(`UPDATE customers SET credit_balance = ?, wallet_balance = ? WHERE customer_id = ?`, [newDebt, newWallet, customer_id], (err2) => {
+            if (err2) return res.status(500).json(err2);
             db.query(
-                `UPDATE customers 
-                 SET credit_balance = ?, wallet_balance = ?
-                 WHERE customer_id = ?`,
-                [newDebt, newWallet, customer_id],
-                (err2) => {
-
-                    if (err2) {
-                        return res.status(500).json(err2);
-                    }
-
-                    // LOG WALLET TRANSACTION
-                    db.query(
-                        `INSERT INTO wallet_transactions
-                        (customer_id, customer_name, type, amount, balance_after, reference)
-                        VALUES (?, ?, 'DEPOSIT', ?, ?, ?)`,
-                        [
-                            customer_id,
-                            clientName,
-                            topupAmount,
-                            newWallet,
-                            `Wallet Topup`
-                        ],
-                        (err3) => {
-
-                            if (err3) {
-                                console.error(err3);
-                                return res.status(500).json(err3);
-                            }
-
-                            res.json({
-                                success: true,
-                                wallet_balance: newWallet,
-                                credit_balance: newDebt
-                            });
-                        }
-                    );
+                `INSERT INTO wallet_transactions (customer_id, customer_name, type, amount, balance_after, reference) VALUES (?, ?, 'DEPOSIT', ?, ?, ?)`,
+                [customer_id, clientName, topupAmount, newWallet, 'Wallet Topup'],
+                (err3) => {
+                    if (err3) return res.status(500).json(err3);
+                    res.json({ success: true, wallet_balance: newWallet, credit_balance: newDebt });
                 }
             );
-        }
-    );
+        });
+    });
 });
 
-// ✅ NEW: Get Total Outstanding Credit across all customers
 app.get('/api/customers/total-credit', (req, res) => {
-    const sql = "SELECT SUM(credit_balance) as total_credit FROM customers";
-    
-    db.query(sql, (err, results) => {
-        if (err) {
-            console.error("Credit Query Error:", err);
-            return res.status(500).json(err);
-        }
-        // results[0].total_credit will be null if no rows exist, so we use || 0
-        const total = results[0].total_credit || 0;
-        res.json({ total_credit: total });
+    db.query("SELECT SUM(credit_balance) as total_credit FROM customers", (err, results) => {
+        if (err) return res.status(500).json(err);
+        res.json({ total_credit: results[0].total_credit || 0 });
     });
 });
 
 app.get('/api/customers/:id/statement', (req, res) => {
-    const customerId = req.params.id;
-    const sql = `
-        SELECT s.sale_date, si.product_name, si.qty, si.price, s.payment_method
-        FROM sales s
-        JOIN sales_items si ON s.id = si.sale_id
-        WHERE s.customer_id = ?
-        ORDER BY s.sale_date DESC`;
-    
-    db.query(sql, [customerId], (err, results) => {
-        if (err) return res.status(500).json(err);
-        res.json(results);
-    });
+    db.query(
+        `SELECT s.id as sale_id, s.sale_date, s.payment_method, s.payment_status, si.product_name, si.qty, si.price FROM sales s JOIN sales_items si ON s.id = si.sale_id WHERE s.customer_id = ? ORDER BY s.sale_date DESC LIMIT 100`,
+        [req.params.id], (err, results) => {
+            if (err) return res.status(500).json(err);
+            res.json(results);
+        }
+    );
 });
 
-// 2. Menu
+app.get('/api/customers/:id/wallet-history', (req, res) => {
+    db.query(
+        `SELECT id, customer_id, customer_name, type, amount, balance_after, reference, created_at FROM wallet_transactions WHERE customer_id = ? ORDER BY created_at DESC LIMIT 50`,
+        [req.params.id], (err, results) => {
+            if (err) { console.warn("wallet_transactions error:", err.message); return res.json([]); }
+            res.json(results);
+        }
+    );
+});
+
+// ─────────────────────────────────────────
+// MENU
+// ─────────────────────────────────────────
+
 app.get('/api/menu', (req, res) => {
     db.query("SELECT * FROM menu_items", (err, results) => {
         if (err) return res.status(500).json(err);
@@ -491,654 +260,234 @@ app.get('/api/menu', (req, res) => {
     });
 });
 
-// 3. MPESA
+// ─────────────────────────────────────────
+// MPESA
+// ─────────────────────────────────────────
+
 app.post('/api/pay/stk', generateToken, async (req, res) => {
     const { phone, amount, clientName, items } = req.body;
     const shortCode = process.env.MPESA_SHORTCODE || "174379";
-    const passkey = process.env.MPESA_PASSKEY;
-
-    const dt = datetime.create();
-    const timestamp = dt.format('YmdHMS');
-    const password = Buffer.from(shortCode + passkey + timestamp).toString('base64');
-
+    const timestamp = datetime.create().format('YmdHMS');
+    const password  = Buffer.from(shortCode + process.env.MPESA_PASSKEY + timestamp).toString('base64');
     try {
         const { data } = await axios.post(
             "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
-            {
-                BusinessShortCode: shortCode,
-                Password: password,
-                Timestamp: timestamp,
-                TransactionType: "CustomerPayBillOnline",
-                Amount: amount,
-                PartyA: phone,
-                PartyB: shortCode,
-                PhoneNumber: phone,
-                CallBackURL: process.env.CALLBACK_URL,
-                AccountReference: "FirstClassHotels",
-                TransactionDesc: `Food for ${clientName}`
-            },
+            { BusinessShortCode: shortCode, Password: password, Timestamp: timestamp, TransactionType: "CustomerPayBillOnline", Amount: amount, PartyA: phone, PartyB: shortCode, PhoneNumber: phone, CallBackURL: process.env.CALLBACK_URL, AccountReference: "FirstClassHotels", TransactionDesc: `Food for ${clientName}` },
             { headers: { Authorization: `Bearer ${req.token}` } }
         );
-
-        console.log("STK Push Initiated:", data.CheckoutRequestID);
-
-        const sql = `INSERT INTO sales (client_name, total_price, payment_status, mpesa_checkout_id, sale_date) VALUES (?, ?, 'Pending', ?, NOW())`;
-
-        db.query(sql, [clientName, amount, data.CheckoutRequestID], (err, result) => {
-            if (err) {
-                console.error("DB Insert Error:", err);
-                return;
+        db.query(
+            `INSERT INTO sales (client_name, total_price, payment_status, mpesa_checkout_id, sale_date) VALUES (?, ?, 'Pending', ?, NOW())`,
+            [clientName, amount, data.CheckoutRequestID],
+            (err, result) => {
+                if (err) return console.error("DB Insert Error:", err);
+                const itemValues = items.map(item => [result.insertId, item.product_name, item.qty, item.price]);
+                db.query(`INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`, [itemValues]);
+                res.json(data);
             }
-
-            const saleId = result.insertId;
-            console.log("Incoming Items:", items);
-
-            const itemValues = items.map(item => {
-                console.log("ITEM:", item);
-                return [saleId, item.product_name, item.qty, item.price];
-            });
-
-            const itemSql = `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`;
-
-            db.query(itemSql, [itemValues], (itemErr) => {
-                if (itemErr) console.error("Item Insert Error:", itemErr);
-                else console.log("Items inserted OK for sale:", saleId);
-            });
-
-            res.json(data);
-        });
-
+        );
     } catch (err) {
         console.error("STK Error:", err.response?.data || err.message);
         res.status(500).json({ message: "STK Push Failed" });
     }
 });
 
-// ✅ ADD THE NEW POLLING ROUTE HERE
 app.get('/api/check-payment/:checkoutID', (req, res) => {
-    const { checkoutID } = req.params;
-    const sql = "SELECT payment_status FROM sales WHERE mpesa_checkout_id = ?";
-    
-    db.query(sql, [checkoutID], (err, results) => {
-        if (err) {
-            console.error("Status Check Error:", err);
-            return res.status(500).json({ error: "Database error" });
-        }
-        if (results.length === 0) {
-            return res.status(404).json({ status: "Not Found" });
-        }
+    db.query("SELECT payment_status FROM sales WHERE mpesa_checkout_id = ?", [req.params.checkoutID], (err, results) => {
+        if (err) return res.status(500).json({ error: "Database error" });
+        if (!results.length) return res.status(404).json({ status: "Not Found" });
         res.json({ status: results[0].payment_status });
     });
 });
 
-// ✅ RESTORED CASH ROUTE
+// ─────────────────────────────────────────
+// CASH PAYMENT
+// ─────────────────────────────────────────
+
 app.post('/api/pay/cash', (req, res) => {
     const { clientName, amount, items } = req.body;
-
-    const sql = "INSERT INTO sales (client_name, total_price, payment_status, sale_date) VALUES (?, ?, 'Completed', NOW())";
-    
-
-    db.query(sql, [clientName, amount], (err, result) => {
-        if (err) {
-            console.error("Cash Insert Error:", err);
-            return res.status(500).json({ success: false });
+    db.query(
+        "INSERT INTO sales (client_name, total_price, payment_status, sale_date) VALUES (?, ?, 'Completed', NOW())",
+        [clientName, amount],
+        (err, result) => {
+            if (err) return res.status(500).json({ success: false });
+            const itemValues = items.map(item => [result.insertId, item.product_name, item.qty, item.price]);
+            db.query(`INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`, [itemValues], (itemErr) => {
+                if (itemErr) return res.status(500).json({ success: false });
+                // Option A: only log, do NOT update stock_quantity
+                logStockUsage(splitComboItems(items), 'Cash Sale');
+                res.json({ success: true });
+            });
         }
-
-        const saleId = result.insertId;
-
-        const itemValues = items.map(item => [
-            saleId,
-            item.product_name,
-            item.qty,
-            item.price
-        ]);
-
-        const itemSql = `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`;
-
-        db.query(itemSql, [itemValues], (itemErr) => {
-            if (itemErr) {
-                console.error("Cash Item Insert Error:", itemErr);
-                return res.status(500).json({ success: false });
-            }
-
-            res.json({ success: true });
-        });
-    });
+    );
 });
 
-// --- UNIFIED POS PAYMENT (Cash, Credit, Advance, Comp) ---
-// --- UNIFIED POS PAYMENT (Cash, Credit, Advance, Comp, Mpesa) ---
+// ─────────────────────────────────────────
+// UNIFIED PAYMENT  (Option A — no stock_quantity updates)
+// ─────────────────────────────────────────
+
 app.post('/api/pay/unified', (req, res) => {
     const { clientName, amount, items, paymentMethod, customerId } = req.body;
-    const stockItems = splitComboItems(items || []); // ONLY for stock
-    const cleanedItems = Array.isArray(items) ? items : []; // ORIGINAL for sales
-    
+
     let method = paymentMethod || "";
-    let finalPrice = amount;
-    let paymentStatus = 'Completed'; 
+    if (method.toLowerCase().includes('mpesa') || method.toLowerCase().includes('m-pesa')) method = 'MPesa';
 
-    // ✅ STRENGTHENED NORMALIZATION
-    // This ensures that no matter what the frontend sends, the DB gets 'Mpesa'
-    if (method.toLowerCase().includes('mpesa') || method.toLowerCase().includes('m-pesa')) {
-        method = 'MPesa';
-    }
+    const finalPrice     = amount;
+    const paymentStatus  = method === 'Credit' ? 'Unpaid' : 'Completed';
+    const cleanedItems   = Array.isArray(items) ? items : [];
+    const stockItems     = splitComboItems(cleanedItems);
 
-    if (method === 'Complimentary') {
-    finalPrice = amount; 
-    } else if (method === 'Credit') {
-        paymentStatus = 'Unpaid';
-    }
-
-    const sql = `INSERT INTO sales (client_name, total_price, payment_status, payment_method, customer_id, sale_date) 
-                 VALUES (?, ?, ?, ?, ?, NOW())`;
+    const sql = `INSERT INTO sales (client_name, total_price, payment_status, payment_method, customer_id, sale_date) VALUES (?, ?, ?, ?, ?, NOW())`;
 
     db.query(sql, [clientName, finalPrice, paymentStatus, method, customerId || null], (err, result) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
 
         const saleId = result.insertId;
-        
-    const itemValues = Array.isArray(cleanedItems)
-    ? cleanedItems
-        .filter(i => i && i.product_name)
-        .map(item => [
-            saleId,
-            item.product_name,
-            item.qty || 0,
-            item.price || 0
-        ])
-    : [];
-        const itemSql = `INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`;
+        const itemValues = cleanedItems.filter(i => i && i.product_name).map(item => [saleId, item.product_name, item.qty || 0, item.price || 0]);
 
-        db.query(itemSql, [itemValues], (itemErr) => {
+        db.query(`INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?`, [itemValues], (itemErr) => {
             if (itemErr) return res.status(500).json({ success: false });
 
+            // Wallet / credit balance updates
             if (method === 'Advance' && customerId) {
-
-    db.query(
-        "UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?",
-        [amount, customerId],
-        (walletErr) => {
-
-            if (walletErr) {
-                console.error(walletErr);
+                db.query("UPDATE customers SET wallet_balance = wallet_balance - ? WHERE customer_id = ?", [amount, customerId], (walletErr) => {
+                    if (walletErr) console.error(walletErr);
+                    db.query("SELECT wallet_balance FROM customers WHERE customer_id = ?", [customerId], (balErr, balResult) => {
+                        if (!balErr && balResult.length > 0) {
+                            db.query(
+                                `INSERT INTO wallet_transactions (customer_id, customer_name, type, amount, balance_after, reference) VALUES (?, ?, 'WITHDRAWAL', ?, ?, ?)`,
+                                [customerId, clientName, amount, balResult[0].wallet_balance, 'Food Purchase']
+                            );
+                        }
+                    });
+                });
             }
 
-            // Get updated balance
-            db.query(
-                "SELECT wallet_balance FROM customers WHERE customer_id = ?",
-                [customerId],
-                (balErr, balResult) => {
-
-                    if (!balErr && balResult.length > 0) {
-
-                        const newBalance = balResult[0].wallet_balance;
-
-                        db.query(
-                            `INSERT INTO wallet_transactions
-                            (customer_id, customer_name, type, amount, balance_after, reference)
-                            VALUES (?, ?, 'WITHDRAWAL', ?, ?, ?)`,
-                            [
-                                customerId,
-                                clientName,
-                                amount,
-                                newBalance,
-                                `Food Purchase`
-                            ]
-                        );
-                    }
-                }
-            );
-        }
-    );
-}
             if (method === 'Credit' && customerId) {
                 db.query("UPDATE customers SET credit_balance = credit_balance + ? WHERE customer_id = ?", [amount, customerId]);
             }
 
-            let reason = (method === 'Complimentary') ? 'Staff/Owner Meal' : `Sale (${method})`;
-            paymentStatus = 'Completed';
-            // ALWAYS deduct stock for ALL completed sales
-if (stockItems && stockItems.length > 0) {
-    cookItems(stockItems);
-    deductStockWithYield(stockItems, `Sale (${method})`);
-}
+            // Option A: only log stock usage — do NOT call any UPDATE on inventory
+            logStockUsage(stockItems, `Sale (${method})`);
 
             res.json({ success: true, saleId });
         });
     });
 });
 
-// 4. CALLBACK
+// ─────────────────────────────────────────
+// MPESA CALLBACK
+// ─────────────────────────────────────────
+
 app.post('/api/callback', (req, res) => {
-    console.log("MPESA CALLBACK RECEIVED:", JSON.stringify(req.body, null, 2));
-
     const callbackData = req.body.Body.stkCallback;
-    const checkoutID = callbackData.CheckoutRequestID;
-    const resultCode = callbackData.ResultCode;
+    const checkoutID   = callbackData.CheckoutRequestID;
+    const finalStatus  = callbackData.ResultCode === 0 ? 'Completed' : 'Failed';
 
-    // Logic: 0 is Success. 1037 (Timeout), 1 (Cancelled), or others = Failed
-    const finalStatus = (resultCode === 0) ? 'Completed' : 'Failed';
+    db.query("UPDATE sales SET payment_status = ? WHERE mpesa_checkout_id = ?", [finalStatus, checkoutID]);
 
-    db.query(
-        "UPDATE sales SET payment_status = ? WHERE mpesa_checkout_id = ?",
-        [finalStatus, checkoutID],
-        (err) => {
-            if (err) console.error("Callback DB Error:", err);
-            else console.log(`Payment marked as ${finalStatus}:`, checkoutID);
-        }
-    );
-
-    db.query(
-    `SELECT si.product_name, si.qty 
-     FROM sales_items si 
-     JOIN sales s ON si.sale_id = s.id 
-     WHERE s.mpesa_checkout_id = ?`,
-    [checkoutID],
-    (err, items) => {
-
-        if (err) {
-            console.error("Callback items fetch error:", err);
-            return;
-        }
-
-        if (!items || items.length === 0) return;
-
-        // Step 1: Cook first (create cooked stock layer)
-        cookItems(items);
-
-        // Prevent double deduction (VERY IMPORTANT)
-if (finalStatus === 'Completed') {
-    const cleanedCallbackItems = splitComboItems(items);
-
-cookItems(cleanedCallbackItems);
-deductStockWithYield(cleanedCallbackItems, 'Mpesa Sale (Callback)');
-}
+    if (finalStatus === 'Completed') {
+        db.query(
+            `SELECT si.product_name, si.qty FROM sales_items si JOIN sales s ON si.sale_id = s.id WHERE s.mpesa_checkout_id = ?`,
+            [checkoutID],
+            (err, items) => {
+                if (err || !items || !items.length) return;
+                // Option A: only log, no stock_quantity update
+                logStockUsage(splitComboItems(items), 'Mpesa Sale');
+            }
+        );
     }
-);
-
     res.json("Received");
 });
-// 5. SALES REPORT
-// 5. SALES REPORT
 
-// ================= 🧾 RECEIPTS MODULE =================
+// ─────────────────────────────────────────
+// RECEIPTS
+// ─────────────────────────────────────────
 
-// GET ALL RECEIPTS (WITH FILTERS)
 app.get('/api/receipts', (req, res) => {
-
     const { search, from, to } = req.query;
-
-    let sql = `
-        SELECT 
-            s.id,
-            s.client_name,
-            s.total_price,
-            s.payment_method,
-            s.payment_status,
-            s.sale_date
-        FROM sales s
-        WHERE 1=1
-    `;
-
+    let sql = `SELECT s.id, s.client_name, s.total_price, s.payment_method, s.payment_status, s.sale_date FROM sales s WHERE 1=1`;
     const params = [];
-
-    // 🔍 SEARCH BY CUSTOMER NAME
-    if (search) {
-        sql += " AND s.client_name LIKE ?";
-        params.push(`%${search}%`);
-    }
-
-    // 📅 DATE FILTER
-    if (from && to) {
-        sql += " AND DATE(s.sale_date) BETWEEN ? AND ?";
-        params.push(from, to);
-    }
-
+    if (search) { sql += " AND s.client_name LIKE ?"; params.push(`%${search}%`); }
+    if (from && to) { sql += " AND DATE(s.sale_date) BETWEEN ? AND ?"; params.push(from, to); }
     sql += " ORDER BY s.sale_date DESC";
-
     db.query(sql, params, (err, results) => {
-        if (err) {
-            console.error("Receipts error:", err);
-            return res.status(500).json(err);
-        }
+        if (err) return res.status(500).json(err);
         res.json(results);
     });
 });
-// GET SINGLE RECEIPT DETAILS
-// ================= SINGLE RECEIPT =================
+
 app.get('/api/receipts/:id', (req, res) => {
-
-    const receiptId = req.params.id;
-
-    console.log("RECEIPT REQUEST:", receiptId);
-
-    // 1. GET SALE
-    const saleSql = `
-        SELECT *
-        FROM sales
-        WHERE id = ?
-        LIMIT 1
-    `;
-
-    db.query(saleSql, [receiptId], (saleErr, saleResult) => {
-
-        if (saleErr) {
-            console.error("SALE QUERY ERROR:", saleErr);
-            return res.status(500).json({
-                success: false,
-                error: saleErr.message
-            });
-        }
-
-        if (!saleResult || saleResult.length === 0) {
-            return res.status(404).json({
-                success: false,
-                error: "Receipt not found"
-            });
-        }
-
-        // 2. GET ITEMS
-        const itemsSql = `
-            SELECT 
-                id,
-                sale_id,
-                product_name,
-                qty,
-                price
-            FROM sales_items
-            WHERE sale_id = ?
-        `;
-
-        db.query(itemsSql, [receiptId], (itemsErr, itemsResult) => {
-
-            if (itemsErr) {
-                console.error("ITEM QUERY ERROR:", itemsErr);
-
-                return res.status(500).json({
-                    success: false,
-                    error: itemsErr.message
-                });
-            }
-
-            console.log("SALE:", saleResult[0]);
-            console.log("ITEMS:", itemsResult);
-
-            res.json({
-                success: true,
-                sale: saleResult[0],
-                items: itemsResult || []
-            });
+    db.query("SELECT * FROM sales WHERE id = ? LIMIT 1", [req.params.id], (saleErr, saleResult) => {
+        if (saleErr) return res.status(500).json({ success: false, error: saleErr.message });
+        if (!saleResult || !saleResult.length) return res.status(404).json({ success: false, error: "Receipt not found" });
+        db.query("SELECT id, sale_id, product_name, qty, price FROM sales_items WHERE sale_id = ?", [req.params.id], (itemsErr, itemsResult) => {
+            if (itemsErr) return res.status(500).json({ success: false, error: itemsErr.message });
+            res.json({ success: true, sale: saleResult[0], items: itemsResult || [] });
         });
     });
 });
 
-app.get('/api/reports/sales-summary', async (req, res) => {
-    const { date } = req.query;
-    const selectedDate = date || getLocalDate();
+// ─────────────────────────────────────────
+// INVENTORY  (Option A — fully dynamic, never reads stock_quantity for balance)
+// ─────────────────────────────────────────
 
-    const itemizedSql = `
-        SELECT 
-  product_name, 
-  SUM(qty) as total_qty, 
-  MAX(price) as price, 
-  SUM(qty * price) as total_revenue
-FROM sales_items si
-JOIN sales s ON si.sale_id = s.id
-WHERE DATE(s.sale_date) = ?
-GROUP BY si.product_name
-ORDER BY total_qty DESC
-    `;
-
-    // 🔧 NORMALIZE PAYMENT METHODS (CRITICAL FOR REPORTS)
-const normalizePaymentMethod = (method) => {
-    if (!method) return '';
-
-    const m = method.toLowerCase();
-
-    if (m.includes('mpesa') || m.includes('m-pesa')) return 'MPesa';
-    if (m.includes('cash')) return 'Cash';
-    if (m.includes('advance')) return 'Advance';
-    if (m.includes('credit')) return 'Credit';
-    if (m.includes('compliment')) return 'Complimentary';
-
-    return method;
-};
-
-    db.query(itemizedSql, [selectedDate], async (err, itemResults) => {
-        // 🔥 APPLY COMBO EXPANSION
-const expandedItems = await expandComboForReports(itemResults);
-        if (err) return res.status(500).json(err);
-
-        const paymentSql = `
-    SELECT 
-        s.payment_method,
-        SUM(si.qty * si.price) as total
-    FROM sales s
-    JOIN sales_items si ON s.id = si.sale_id
-    WHERE DATE(s.sale_date) = ?
-    AND s.payment_status != 'Pending'
-    AND s.payment_method != 'InternalAdjustment'
-    GROUP BY s.payment_method
-`;
-
-        db.query(paymentSql, [selectedDate], (err2, payResults) => {
-            if (err2) return res.status(500).json(err2);
-
-            // 🔥 NORMALIZED BREAKDOWN (IMPORTANT FIX)
-            const payments = {
-                Cash: 0,
-                MPesa: 0,
-                Wallet: 0,
-                Complimentary: 0,
-                CreditCard: 0
-            };
-
-            payResults.forEach(row => {
-    const method = normalizePaymentMethod(row.payment_method);
-    const amount = parseFloat(row.total || 0);
-
-    if (method === 'Cash') {
-        payments.Cash += amount;
-    } else if (method === 'MPesa' || method === 'Mpesa' || method === 'M-Pesa') { // ✅ Added check for both
-        payments.MPesa += amount;
-    } else if (method === 'Advance') {
-        payments.Wallet += amount;
-    } else if (method === 'Complimentary') {
-        payments.Complimentary += amount;
-        } else if (method === 'Credit') {
-    payments.Credit = (payments.Credit || 0) + amount;
-        } else if (method === 'CreditCard') {
-    payments.CreditCard += amount;
-}
-});
-
-           // ✅ NORMALIZE FUNCTION
-const normalize = (name) => name.trim().toLowerCase();
-
-// 🔥 SMART GROUPING MAP
-const grouped = {};
-
-expandedItems.forEach(item => {
-    const key = item.product_name;
-
-    if (!grouped[key]) {
-        grouped[key] = {
-            product_name: item.product_name,
-            total_qty: 0,
-            total_revenue: 0,
-            price: item.price
-        };
-    }
-
-    grouped[key].total_qty += Number(item.total_qty || 0);
-    grouped[key].total_revenue += Number(item.total_revenue || 0);
-
-    // ✅ recalculate correct unit price
-    if (grouped[key].total_qty > 0) {
-        grouped[key].price = grouped[key].total_revenue / grouped[key].total_qty;
-    }
-});
-
-res.json({
-    itemized: Object.values(grouped),
-    payments
-});
-        });
-    });
-});
-// ================= 🔥 ADVANCED REPORTING ROUTES =================
-
-app.get('/api/reports/advanced-summary', (req, res) => {
-    const sql = `
-        SELECT DATE(sale_date) as date, SUM(total_price) as total
-        FROM sales
-        WHERE payment_status = 'Completed'
-AND (
-    LOWER(payment_method) LIKE '%cash%'
-    OR LOWER(payment_method) LIKE '%mpesa%'
-)
-        GROUP BY DATE(sale_date)
-        ORDER BY date DESC
-        LIMIT 30
-    `;
-    db.query(sql, (err, results) => {
-        if (err) return res.status(500).json(err);
-        res.json(results);
-    });
-});
-
-app.get('/api/reports/payment-breakdown', (req, res) => {
-    const { date } = req.query;
-    const sql = `
-        SELECT payment_method, SUM(total_price) as total -- Change payment_status to payment_method
-        FROM sales
-        WHERE DATE(sale_date) = ?
-        GROUP BY payment_method
-    `;
-    db.query(sql, [date], (err, results) => {
-        if (err) return res.status(500).json(err);
-        res.json(results);
-    });
-});
-
-app.get('/api/reports/top-items', (req, res) => {
-    const { date } = req.query;
-    const sql = `
-        SELECT si.product_name, SUM(si.qty) as total_qty
-        FROM sales_items si
-        JOIN sales s ON si.sale_id = s.id
-        WHERE DATE(s.sale_date) = ?
-        AND s.payment_status = 'Completed'
-        GROUP BY si.product_name, s.payment_method, s.payment_status
-        ORDER BY total_qty DESC
-        LIMIT 5
-    `;
-    db.query(sql, [date], (err, results) => {
-        if (err) return res.status(500).json(err);
-        res.json(results);
-    });
-});
-
-app.get('/api/reports/hourly-sales', (req, res) => {
-    const { date } = req.query;
-    const sql = `
-        SELECT HOUR(s.sale_date) as hour, SUM(s.total_price) as total
-        FROM sales s
-        WHERE DATE(s.sale_date) = ?
-        AND s.payment_status = 'Completed'
-        GROUP BY hour
-        ORDER BY hour
-    `;
-    db.query(sql, [date], (err, results) => {
-        if (err) return res.status(500).json(err);
-        res.json(results);
-    });
-});
-
-app.get('/api/reports/monthly-cumulative', (req, res) => {
-    const { month } = req.query; 
-    const sql = `
-    SELECT COALESCE(SUM(total_price), 0) as total_revenue 
-    FROM sales 
-    WHERE DATE_FORMAT(sale_date, '%Y-%m') = ? 
-    AND payment_status != 'Pending'
-    AND payment_method != 'InternalAdjustment'
-    AND (
-        LOWER(payment_method) LIKE '%cash%' 
-        OR LOWER(payment_method) LIKE '%mpesa%'
-        OR LOWER(payment_method) LIKE '%advance%'
-        OR LOWER(payment_method) LIKE '%wallet%'
-    )
-`;
-
-    db.query(sql, [month], (err, results) => {
-        if (err) return res.status(500).json(err);
-        res.json({ total_revenue: parseFloat(results[0].total_revenue) });
-    });
-});
-
-// ================= 🛒 INVENTORY & AUDIT ROUTES =================
-
-// --- WEEKLY INVENTORY LOGIC ---
 app.get('/api/inventory', (req, res) => {
-    // 1. Calculate the start of the current week (Sunday)
     const now = new Date();
-    const dayOfWeek = now.getDay(); // 0 is Sunday
-    const startOfWeek = new Date(now.setDate(now.getDate() - dayOfWeek));
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
     const formattedStart = startOfWeek.toISOString().split('T')[0];
 
+    // Sum portions sold this week per material, then convert to kg inside JS
     const sql = `
         SELECT 
-            i.id, 
-            i.item_name, 
-            i.unit_measure, 
-            i.opening_stock, 
+            i.id,
+            i.item_name,
+            i.unit_measure,
+            i.opening_stock,
             i.added_stock,
-            COALESCE(SUM(si.qty / y.yield_per_unit), 0) as total_units_sold
+            y.yield_per_unit,
+            COALESCE(SUM(si.qty), 0) AS total_portions_sold
         FROM inventory i
-        LEFT JOIN yield_rules y ON i.item_name = y.material_name
-        LEFT JOIN sales_items si ON y.menu_item_name = si.product_name
-        LEFT JOIN sales s ON si.sale_id = s.id 
-            AND s.payment_status = 'Completed' 
-            AND s.sale_date >= ?
-        GROUP BY i.id
+        LEFT JOIN yield_rules y      ON i.item_name = y.material_name
+        LEFT JOIN sales_items si     ON y.menu_item_name = si.product_name
+        LEFT JOIN sales s            ON si.sale_id = s.id
+                                    AND s.payment_status = 'Completed'
+                                    AND s.sale_date >= ?
+        GROUP BY i.id, i.item_name, i.unit_measure, i.opening_stock, i.added_stock, y.yield_per_unit
     `;
 
     db.query(sql, [formattedStart], (err, results) => {
         if (err) return res.status(500).json(err);
-        
+
         const inventoryWithCalculations = results.map(item => {
-            const opening = parseFloat(item.opening_stock);
-            const added = parseFloat(item.added_stock);
-            const sold = parseFloat(item.total_units_sold);
-            const closingUnits = opening + added - sold;
+            const opening      = parseFloat(item.opening_stock)      || 0;
+            const added        = parseFloat(item.added_stock)        || 0;
+            const yieldPerUnit = parseFloat(item.yield_per_unit)     || 1;
+            const portions     = parseFloat(item.total_portions_sold)|| 0;
 
-            // --- UNIT DISPLAY LOGIC ---
-            // Extract the number from "2kg Packet" or "50kg Bag"
-            const weightMatch = item.unit_measure.match(/(\d+)/);
-            const unitWeight = weightMatch ? parseInt(weightMatch[0]) : 1;
+            // KEY: portions → kg, then subtract from physical stock
+            const kgUsed    = portions / yieldPerUnit;
+            const closingKg = opening + added - kgUsed;
 
-            let displayStock = "";
-            let displayOpening = "";
+            const weightMatch = item.unit_measure ? item.unit_measure.match(/(\d+)/) : null;
+            const unitWeight  = weightMatch ? parseInt(weightMatch[0]) : 1;
 
+            let displayStock, displayOpening;
             if (item.item_name.toLowerCase().includes("potato")) {
-                // Show as: 7 (50kg each)
-                displayStock = `${Math.floor(closingUnits)} (${item.unit_measure} each)`;
+                displayStock   = `${Math.floor(closingKg)} (${item.unit_measure} each)`;
                 displayOpening = `${opening} (${item.unit_measure})`;
             } else {
-                // Show cumulative: 22 kg
-                const totalKg = Math.floor(closingUnits * unitWeight);
-                displayStock = `${totalKg} kg`;
-                displayOpening = `${opening * unitWeight} kg`;
+                displayStock   = `${(closingKg * unitWeight).toFixed(2)} kg`;
+                displayOpening = `${(opening  * unitWeight).toFixed(2)} kg`;
             }
 
             return {
                 ...item,
                 displayOpening,
                 displayStock,
-                stock_quantity: Math.floor(closingUnits),
-                units_sold: Math.ceil(sold)
+                stock_quantity: parseFloat(closingKg.toFixed(2)),
+                units_sold:     parseFloat(kgUsed.toFixed(2))
             };
         });
 
@@ -1146,35 +495,15 @@ app.get('/api/inventory', (req, res) => {
     });
 });
 
-// ✏️ EDIT INVENTORY ITEM (ADMIN FIX MISTAKES)
 app.put('/api/inventory/update-item', (req, res) => {
-
-    // 🔐 ADMIN CHECK (ADD THIS FIRST)
-    if (req.headers['user-role'] !== 'Admin') {
-        return res.status(403).json({ success: false, message: "Unauthorized" });
-    }
-
-    const { id, item_name, unit_measure, stock_quantity, opening_stock, added_stock } = req.body;
-
-    const sql = `
-        UPDATE inventory 
-        SET item_name = ?, 
-            unit_measure = ?, 
-            stock_quantity = ?, 
-            opening_stock = ?, 
-            added_stock = ?
-        WHERE id = ?
-    `;
-
+    if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ success: false, message: "Unauthorized" });
+    const { id, item_name, unit_measure, opening_stock, added_stock } = req.body;
+    // Option A: update opening_stock and added_stock only — not stock_quantity
     db.query(
-        sql,
-        [item_name, unit_measure, stock_quantity, opening_stock, added_stock, id],
-        (err, result) => {
-            if (err) {
-                console.error("Inventory update error:", err);
-                return res.status(500).json({ success: false, error: err });
-            }
-
+        `UPDATE inventory SET item_name = ?, unit_measure = ?, opening_stock = ?, added_stock = ? WHERE id = ?`,
+        [item_name, unit_measure, Number(opening_stock), Number(added_stock), id],
+        (err) => {
+            if (err) return res.status(500).json({ success: false, error: err });
             res.json({ success: true, message: "Inventory item updated successfully" });
         }
     );
@@ -1182,40 +511,99 @@ app.put('/api/inventory/update-item', (req, res) => {
 
 app.post('/api/inventory/add-stock', (req, res) => {
     const { item_id, quantity_to_add } = req.body;
-    const sql = "UPDATE inventory SET stock_quantity = stock_quantity + ?, added_stock = added_stock + ? WHERE id = ?";
-    db.query(sql, [quantity_to_add, quantity_to_add, item_id], (err, result) => {
-        if (err) return res.status(500).json(err);
-        res.json({ success: true });
-    });
+    // Option A: add to added_stock only — closing balance recalculates automatically
+    db.query(
+        "UPDATE inventory SET added_stock = added_stock + ? WHERE id = ?",
+        [quantity_to_add, item_id],
+        (err) => {
+            if (err) return res.status(500).json(err);
+            res.json({ success: true });
+        }
+    );
 });
 
 app.post('/api/inventory/add-new', (req, res) => {
     const { item_name, unit_measure, stock_quantity } = req.body;
-    const sql = "INSERT INTO inventory (item_name, unit_measure, stock_quantity, opening_stock) VALUES (?, ?, ?, ?)";
-    db.query(sql, [item_name, unit_measure, stock_quantity, stock_quantity], (err, result) => {
+    db.query(
+        "INSERT INTO inventory (item_name, unit_measure, stock_quantity, opening_stock, added_stock) VALUES (?, ?, ?, ?, 0)",
+        [item_name, unit_measure, stock_quantity, stock_quantity],
+        (err, result) => {
+            if (err) return res.status(500).json(err);
+            res.json({ success: true });
+        }
+    );
+});
+
+// ─────────────────────────────────────────
+// WEEKLY RESET  — call every Sunday midnight to roll opening_stock forward
+// POST /api/inventory/weekly-reset  (Admin only, call via cron job)
+// ─────────────────────────────────────────
+
+app.post('/api/inventory/weekly-reset', (req, res) => {
+    if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ message: "Unauthorized" });
+
+    // New opening = old opening + added - (portions_sold / yield)
+    // We recalculate closing for each item and make it the new opening
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const formattedStart = startOfWeek.toISOString().split('T')[0];
+
+    const sql = `
+        SELECT 
+            i.id,
+            i.opening_stock,
+            i.added_stock,
+            y.yield_per_unit,
+            COALESCE(SUM(si.qty), 0) AS total_portions_sold
+        FROM inventory i
+        LEFT JOIN yield_rules y  ON i.item_name = y.material_name
+        LEFT JOIN sales_items si ON y.menu_item_name = si.product_name
+        LEFT JOIN sales s        ON si.sale_id = s.id
+                                AND s.payment_status = 'Completed'
+                                AND s.sale_date >= ?
+        GROUP BY i.id, i.opening_stock, i.added_stock, y.yield_per_unit
+    `;
+
+    db.query(sql, [formattedStart], (err, results) => {
         if (err) return res.status(500).json(err);
-        res.json({ success: true });
+
+        results.forEach(item => {
+            const opening  = parseFloat(item.opening_stock)       || 0;
+            const added    = parseFloat(item.added_stock)         || 0;
+            const yield_   = parseFloat(item.yield_per_unit)      || 1;
+            const portions = parseFloat(item.total_portions_sold) || 0;
+            const newOpening = parseFloat((opening + added - (portions / yield_)).toFixed(2));
+
+            db.query(
+                "UPDATE inventory SET opening_stock = ?, added_stock = 0 WHERE id = ?",
+                [Math.max(0, newOpening), item.id]
+            );
+        });
+
+        res.json({ success: true, message: "Weekly stock rolled over successfully" });
     });
 });
 
-// ✅ UPDATED: Precision Audit Logic
-// ✅ REPLACE your entire /api/inventory/audit-report route with this
+// ─────────────────────────────────────────
+// AUDIT REPORT
+// ─────────────────────────────────────────
 
 app.get('/api/inventory/audit-report', (req, res) => {
     const sql = `
         SELECT 
-            i.item_name, 
-            i.unit_measure, 
-            i.stock_quantity, 
-            i.opening_stock, 
+            i.item_name,
+            i.unit_measure,
+            i.opening_stock,
             i.added_stock,
-            y.menu_item_name, 
+            y.menu_item_name,
             y.yield_per_unit,
             (
-                SELECT COALESCE(SUM(si.qty), 0) 
-                FROM sales_items si 
-                JOIN sales s ON si.sale_id = s.id 
-                WHERE si.product_name = y.menu_item_name 
+                SELECT COALESCE(SUM(si.qty), 0)
+                FROM sales_items si
+                JOIN sales s ON si.sale_id = s.id
+                WHERE si.product_name = y.menu_item_name
                 AND s.payment_status = 'Completed'
             ) as total_sold
         FROM inventory i
@@ -1228,78 +616,50 @@ app.get('/api/inventory/audit-report', (req, res) => {
         const groupedAudit = {};
 
         results.forEach(row => {
-            const itemKey = row.item_name;
-
-            // Initialize the material entry
-            if (!groupedAudit[itemKey]) {
-                groupedAudit[itemKey] = {
-                    name: row.item_name,
-                    unit: row.unit_measure,
-                    currentInStore: parseFloat(row.stock_quantity) || 0,
-                    totalStartStore: (parseFloat(row.opening_stock) || 0) + (parseFloat(row.added_stock) || 0),
-                    // Use a MAP to group by menu_item_name and sum qty
-                    soldMap: {}
+            const key = row.item_name;
+            if (!groupedAudit[key]) {
+                groupedAudit[key] = {
+                    name:           row.item_name,
+                    unit:           row.unit_measure,
+                    totalStartStore:(parseFloat(row.opening_stock) || 0) + (parseFloat(row.added_stock) || 0),
+                    soldMap:        {}
                 };
             }
-
-            // ✅ GROUP by menu_item_name — sum qty if same item appears multiple times
             if (row.menu_item_name && parseFloat(row.total_sold) > 0) {
                 const menuKey = row.menu_item_name;
-                if (!groupedAudit[itemKey].soldMap[menuKey]) {
-                    groupedAudit[itemKey].soldMap[menuKey] = {
-                        name: menuKey,
-                        qty: 0,
-                        yield: parseFloat(row.yield_per_unit) || 1
-                    };
+                if (!groupedAudit[key].soldMap[menuKey]) {
+                    groupedAudit[key].soldMap[menuKey] = { name: menuKey, qty: 0, yield: parseFloat(row.yield_per_unit) || 1 };
                 }
-                groupedAudit[itemKey].soldMap[menuKey].qty += parseFloat(row.total_sold) || 0;
+                groupedAudit[key].soldMap[menuKey].qty += parseFloat(row.total_sold) || 0;
             }
         });
 
         const finalReport = Object.values(groupedAudit).map(mat => {
-            // Convert soldMap back to array
             const soldItems = Object.values(mat.soldMap);
+            let totalKgUsed = 0;
+            soldItems.forEach(item => { totalKgUsed += item.qty / item.yield; });
 
-            // ✅ Calculate total fractional raw material used across ALL menu items
-            let totalFractionalUsed = 0;
-
-            soldItems.forEach(item => {
-                const unitsUsed = item.qty / item.yield;
-                totalFractionalUsed += unitsUsed;
-            });
-
-            const exactRemaining = mat.totalStartStore - totalFractionalUsed;
+            const exactRemaining  = mat.totalStartStore - totalKgUsed;
             const wholeUnitsInStore = Math.floor(exactRemaining);
-
-            // ✅ Clean unit display — strip numbers from "2kg Packet" → "Packet" or keep as-is
             const unitDisplay = mat.unit || 'unit';
 
-            let message = "";
+            const totalPortionsSold = soldItems.reduce((acc, i) => acc + i.qty, 0);
 
+            let soldDetails = '';
+            if (soldItems.length === 1) {
+                soldDetails = `${soldItems[0].qty} portions of ${soldItems[0].name}`;
+            } else if (soldItems.length > 1) {
+                soldDetails = soldItems.map(si => `${si.qty} × ${si.name}`).join(', ') + ` (${totalPortionsSold} total)`;
+            }
+
+            const openUnitPortions     = soldItems[0]?.yield || 1;
+            const fractionalUsed       = totalKgUsed % 1;
+            const portionsLeftInOpen   = fractionalUsed > 0 ? Math.round((1 - fractionalUsed) * openUnitPortions) : 0;
+
+            let message = '';
             if (soldItems.length > 0) {
-                // ✅ Show clean sold summary — group into one sentence
-                const totalPortionsSold = soldItems.reduce((acc, i) => acc + i.qty, 0);
-                
-                // Show breakdown only if multiple menu items use this material
-                let soldDetails;
-                if (soldItems.length === 1) {
-                    soldDetails = `${soldItems[0].qty} portions of ${soldItems[0].name}`;
-                } else {
-                    soldDetails = soldItems
-                        .map(si => `${si.qty} × ${si.name}`)
-                        .join(', ');
-                    soldDetails += ` (${totalPortionsSold} portions total)`;
-                }
-
-                // ✅ Kitchen remainder — how many portions remain in the currently open unit
-                const openUnitPortions = soldItems[0]?.yield || 1; // portions per unit
-                const portionsUsedInOpenUnit = totalFractionalUsed % 1; // fractional part
-                const portionsLeftInOpen = portionsUsedInOpenUnit > 0 
-                    ? Math.round((1 - portionsUsedInOpenUnit) * openUnitPortions)
-                    : 0;
-
                 if (wholeUnitsInStore < 0) {
-                    message = `⚠️ Stock shortage! Sold: ${soldDetails}. Expected ${wholeUnitsInStore < 0 ? 0 : wholeUnitsInStore} ${unitDisplay} in store but calculations show a deficit. Please recount.`;
+                    message = `Stock shortage! Sold: ${soldDetails}. Calculations show a deficit — please recount.`;
                 } else if (portionsLeftInOpen > 0) {
                     message = `Sold: ${soldDetails}. ~${portionsLeftInOpen} portions remain in the open ${unitDisplay}. Store should have ${wholeUnitsInStore} full ${unitDisplay}.`;
                 } else {
@@ -1310,12 +670,12 @@ app.get('/api/inventory/audit-report', (req, res) => {
             }
 
             return {
-                item: mat.name,
-                unit: unitDisplay,
-                totalSold: Object.values(mat.soldMap).reduce((acc, i) => acc + i.qty, 0),
-                soldBreakdown: Object.values(mat.soldMap),
-                shouldBe: Math.max(0, wholeUnitsInStore),
-                hasShortage: wholeUnitsInStore < 0,
+                item:          mat.name,
+                unit:          unitDisplay,
+                totalSold:     totalPortionsSold,
+                soldBreakdown: soldItems,
+                shouldBe:      Math.max(0, wholeUnitsInStore),
+                hasShortage:   wholeUnitsInStore < 0,
                 message
             };
         });
@@ -1324,255 +684,146 @@ app.get('/api/inventory/audit-report', (req, res) => {
     });
 });
 
-app.get('/', (req, res) => {
-    res.send("POS API running...");
-});
+// ─────────────────────────────────────────
+// REPORTS
+// ─────────────────────────────────────────
 
-// ================= DATE RANGE REPORT =================
-app.get('/api/reports/date-range', (req, res) => {
-    const { from, to } = req.query;
-
-    if (!from || !to) {
-        return res.status(400).json({ error: "Missing date range" });
-    }
-
+app.get('/api/reports/sales-summary', async (req, res) => {
+    const selectedDate = req.query.date || getLocalDate();
     const itemizedSql = `
-    SELECT 
-        si.product_name,
-        SUM(si.qty) as total_qty,
-        MAX(si.price) as price,
-        SUM(si.qty * si.price) as total_revenue
-    FROM sales_items si
-    JOIN sales s ON si.sale_id = s.id
-    WHERE DATE(s.sale_date) BETWEEN ? AND ?
-    GROUP BY si.product_name
-    ORDER BY total_qty DESC
-`;
+        SELECT product_name, SUM(qty) as total_qty, MAX(price) as price, SUM(qty * price) as total_revenue
+        FROM sales_items si JOIN sales s ON si.sale_id = s.id
+        WHERE DATE(s.sale_date) = ?
+        GROUP BY si.product_name ORDER BY total_qty DESC`;
 
-    const paymentsSql = `
-        SELECT payment_method, SUM(total_price) as total
-        FROM sales
-        WHERE DATE(sale_date) BETWEEN ? AND ?
-        AND payment_status = 'Completed'
-        AND payment_method != 'InternalAdjustment'
-        GROUP BY payment_method
-    `;
+    db.query(itemizedSql, [selectedDate], async (err, itemResults) => {
+        if (err) return res.status(500).json(err);
+        const expandedItems = await expandComboForReports(itemResults);
 
-    db.query(itemizedSql, [from, to], async (err, items) => {
-    if (err) {
-        console.error("ITEM QUERY ERROR:", err);
-        return res.status(500).json({ error: "Item query failed" });
-    }
+        const paymentSql = `
+            SELECT s.payment_method, SUM(si.qty * si.price) as total
+            FROM sales s JOIN sales_items si ON s.id = si.sale_id
+            WHERE DATE(s.sale_date) = ? AND s.payment_status != 'Pending' AND s.payment_method != 'InternalAdjustment'
+            GROUP BY s.payment_method`;
 
-    // ✅ EXPAND COMBO MEALS
-    const expandedItems = await expandComboForReports(items);
+        db.query(paymentSql, [selectedDate], (err2, payResults) => {
+            if (err2) return res.status(500).json(err2);
 
-    db.query(paymentsSql, [from, to], (err2, paymentsRaw) => {
-        if (err2) {
-            console.error("PAYMENT QUERY ERROR:", err2);
-            return res.status(500).json({ error: "Payment query failed" });
-        }
-
-            const payments = {
-                Cash: 0,
-                MPesa: 0,
-                Wallet: 0,
-                Complimentary: 0,
-                Credit: 0,
-                CreditCard: 0
-            };
-
-            // ✅ SAFE LOOP
-            (paymentsRaw || []).forEach(row => {
+            const payments = { Cash: 0, MPesa: 0, Wallet: 0, Complimentary: 0, Credit: 0, CreditCard: 0 };
+            payResults.forEach(row => {
                 const method = normalizePaymentMethod(row.payment_method);
                 const amount = parseFloat(row.total || 0);
-
-                if (method === 'Cash') payments.Cash += amount;
-                else if (method && method.toLowerCase().includes('mpesa')) payments.MPesa += amount;
-                else if (method === 'Advance') payments.Wallet += amount;
+                if (method === 'Cash')          payments.Cash          += amount;
+                else if (method === 'MPesa')    payments.MPesa         += amount;
+                else if (method === 'Advance')  payments.Wallet        += amount;
                 else if (method === 'Complimentary') payments.Complimentary += amount;
-                else if (method === 'Credit') payments.Credit += amount;
-                else if (method === 'CreditCard') payments.CreditCard += amount;
+                else if (method === 'Credit')   payments.Credit        += amount;
+                else if (method === 'CreditCard') payments.CreditCard  += amount;
             });
 
-            const totalRevenue =
-                payments.Cash +
-                payments.MPesa +
-                payments.Wallet +
-                payments.Complimentary +
-                payments.Credit +
-                payments.CreditCard;
-
-                // ✅ FINAL SMART GROUPING
-const grouped = {};
-
-(expandedItems || []).forEach(item => {
-
-    const key = item.product_name.trim().toLowerCase();
-
-    if (!grouped[key]) {
-        grouped[key] = {
-            product_name: item.product_name,
-            total_qty: 0,
-            total_revenue: 0,
-            price: Number(item.price || 0)
-        };
-    }
-
-    grouped[key].total_qty += Number(item.total_qty || 0);
-    grouped[key].total_revenue += Number(item.total_revenue || 0);
-
-    // recalculate proper unit price
-    if (grouped[key].total_qty > 0) {
-        grouped[key].price =
-            grouped[key].total_revenue / grouped[key].total_qty;
-    }
-});
-
-const finalItems = Object.values(grouped);
-
-            res.json({
-                itemized: finalItems,
-                payments,
-                totalRevenue: totalRevenue || 0
+            const grouped = {};
+            expandedItems.forEach(item => {
+                const key = item.product_name;
+                if (!grouped[key]) grouped[key] = { product_name: item.product_name, total_qty: 0, total_revenue: 0, price: item.price };
+                grouped[key].total_qty     += Number(item.total_qty || 0);
+                grouped[key].total_revenue += Number(item.total_revenue || 0);
+                if (grouped[key].total_qty > 0) grouped[key].price = grouped[key].total_revenue / grouped[key].total_qty;
             });
+
+            res.json({ itemized: Object.values(grouped), payments });
         });
     });
 });
 
-app.post('/api/kitchen/cook', (req, res) => {
-    const { menu_item_name, quantity } = req.body;
+app.get('/api/reports/advanced-summary', (req, res) => {
+    db.query(
+        `SELECT DATE(sale_date) as date, SUM(total_price) as total FROM sales WHERE payment_status = 'Completed' AND (LOWER(payment_method) LIKE '%cash%' OR LOWER(payment_method) LIKE '%mpesa%') GROUP BY DATE(sale_date) ORDER BY date DESC LIMIT 30`,
+        (err, results) => { if (err) return res.status(500).json(err); res.json(results); }
+    );
+});
 
-    const sql = `
-        SELECT material_name, yield_per_unit
-        FROM yield_rules
-        WHERE menu_item_name = ?
-    `;
+app.get('/api/reports/payment-breakdown', (req, res) => {
+    db.query(
+        "SELECT payment_method, SUM(total_price) as total FROM sales WHERE DATE(sale_date) = ? GROUP BY payment_method",
+        [req.query.date], (err, results) => { if (err) return res.status(500).json(err); res.json(results); }
+    );
+});
 
-    db.query(sql, [menu_item_name], (err, rules) => {
-        if (err) return res.status(500).json(err);
+app.get('/api/reports/top-items', (req, res) => {
+    db.query(
+        `SELECT si.product_name, SUM(si.qty) as total_qty FROM sales_items si JOIN sales s ON si.sale_id = s.id WHERE DATE(s.sale_date) = ? AND s.payment_status = 'Completed' GROUP BY si.product_name ORDER BY total_qty DESC LIMIT 5`,
+        [req.query.date], (err, results) => { if (err) return res.status(500).json(err); res.json(results); }
+    );
+});
 
-        if (!rules.length) {
-            return res.status(400).json({ message: "No yield rule found" });
-        }
+app.get('/api/reports/hourly-sales', (req, res) => {
+    db.query(
+        `SELECT HOUR(s.sale_date) as hour, SUM(s.total_price) as total FROM sales s WHERE DATE(s.sale_date) = ? AND s.payment_status = 'Completed' GROUP BY hour ORDER BY hour`,
+        [req.query.date], (err, results) => { if (err) return res.status(500).json(err); res.json(results); }
+    );
+});
 
-        let rawUsageSummary = [];
+app.get('/api/reports/monthly-cumulative', (req, res) => {
+    db.query(
+        `SELECT COALESCE(SUM(total_price), 0) as total_revenue FROM sales WHERE DATE_FORMAT(sale_date, '%Y-%m') = ? AND payment_status != 'Pending' AND payment_method != 'InternalAdjustment' AND (LOWER(payment_method) LIKE '%cash%' OR LOWER(payment_method) LIKE '%mpesa%' OR LOWER(payment_method) LIKE '%advance%' OR LOWER(payment_method) LIKE '%wallet%')`,
+        [req.query.month], (err, results) => { if (err) return res.status(500).json(err); res.json({ total_revenue: parseFloat(results[0].total_revenue) }); }
+    );
+});
 
-        rules.forEach(rule => {
+app.get('/api/reports/date-range', async (req, res) => {
+    const { from, to } = req.query;
+    if (!from || !to) return res.status(400).json({ error: "Missing date range" });
 
-            const material = rule.material_name;
-            const yield = parseFloat(rule.yield_per_unit);
-
-            // RAW CONSUMPTION HAPPENS HERE (ONLY WHEN COOKING)
-            const rawUsed = quantity / yield;
+    db.query(
+        `SELECT si.product_name, SUM(si.qty) as total_qty, MAX(si.price) as price, SUM(si.qty * si.price) as total_revenue FROM sales_items si JOIN sales s ON si.sale_id = s.id WHERE DATE(s.sale_date) BETWEEN ? AND ? GROUP BY si.product_name ORDER BY total_qty DESC`,
+        [from, to],
+        async (err, items) => {
+            if (err) return res.status(500).json({ error: "Item query failed" });
+            const expandedItems = await expandComboForReports(items);
 
             db.query(
-                `UPDATE inventory 
-                 SET stock_quantity = stock_quantity - ?
-                 WHERE item_name = ?`,
-                [rawUsed, material]
+                `SELECT payment_method, SUM(total_price) as total FROM sales WHERE DATE(sale_date) BETWEEN ? AND ? AND payment_status = 'Completed' AND payment_method != 'InternalAdjustment' GROUP BY payment_method`,
+                [from, to],
+                (err2, paymentsRaw) => {
+                    if (err2) return res.status(500).json({ error: "Payment query failed" });
+
+                    const payments = { Cash: 0, MPesa: 0, Wallet: 0, Complimentary: 0, Credit: 0, CreditCard: 0 };
+                    (paymentsRaw || []).forEach(row => {
+                        const method = normalizePaymentMethod(row.payment_method);
+                        const amount = parseFloat(row.total || 0);
+                        if (method === 'Cash')          payments.Cash          += amount;
+                        else if (method === 'MPesa')    payments.MPesa         += amount;
+                        else if (method === 'Advance')  payments.Wallet        += amount;
+                        else if (method === 'Complimentary') payments.Complimentary += amount;
+                        else if (method === 'Credit')   payments.Credit        += amount;
+                        else if (method === 'CreditCard') payments.CreditCard  += amount;
+                    });
+
+                    const grouped = {};
+                    (expandedItems || []).forEach(item => {
+                        const key = item.product_name.trim().toLowerCase();
+                        if (!grouped[key]) grouped[key] = { product_name: item.product_name, total_qty: 0, total_revenue: 0, price: Number(item.price || 0) };
+                        grouped[key].total_qty     += Number(item.total_qty || 0);
+                        grouped[key].total_revenue += Number(item.total_revenue || 0);
+                        if (grouped[key].total_qty > 0) grouped[key].price = grouped[key].total_revenue / grouped[key].total_qty;
+                    });
+
+                    const totalRevenue = Object.values(payments).reduce((a, b) => a + b, 0);
+                    res.json({ itemized: Object.values(grouped), payments, totalRevenue });
+                }
             );
-
-            rawUsageSummary.push({
-                material,
-                used: rawUsed
-            });
-        });
-
-        // Add cooked stock
-        db.query(
-            `INSERT INTO cooked_stock (menu_item_name, quantity)
-             VALUES (?, ?)`,
-            [menu_item_name, quantity]
-        );
-
-        // Log production
-        db.query(
-            `INSERT INTO production_log (menu_item_name, quantity_produced, raw_used)
-             VALUES (?, ?, ?)`,
-            [menu_item_name, quantity, JSON.stringify(rawUsageSummary)]
-        );
-
-        res.json({ success: true, message: "Cooking completed" });
-    });
-});
-
-app.get('/api/customers/:id/statement', (req, res) => {
-    const customerId = req.params.id;
-    const sql = `
-        SELECT 
-            s.id as sale_id,
-            s.sale_date,
-            s.payment_method,
-            s.payment_status,
-            si.product_name,
-            si.qty,
-            si.price
-        FROM sales s
-        JOIN sales_items si ON s.id = si.sale_id
-        WHERE s.customer_id = ?
-        ORDER BY s.sale_date DESC
-        LIMIT 100
-    `;
-    db.query(sql, [customerId], (err, results) => {
-        if (err) return res.status(500).json(err);
-        res.json(results);
-    });
-});
-
-app.get('/api/customers/:id/wallet-history', (req, res) => {
-    const customerId = req.params.id;
- 
-    // First try the wallet_transactions table
-    const sql = `
-        SELECT 
-            id,
-            customer_id,
-            customer_name,
-            type,
-            amount,
-            balance_after,
-            reference,
-            created_at
-        FROM wallet_transactions
-        WHERE customer_id = ?
-        ORDER BY created_at DESC
-        LIMIT 50
-    `;
- 
-    db.query(sql, [customerId], (err, results) => {
-        if (err) {
-            // If table doesn't exist yet, return empty array gracefully
-            console.warn("wallet_transactions table error:", err.message);
-            return res.json([]);
         }
-        res.json(results);
-    });
+    );
 });
 
 app.get('/api/reports/customer-orders/:id', (req, res) => {
-    const customerId = req.params.id;
-    const sql = `
-        SELECT 
-            si.product_name,
-            SUM(si.qty) as total_qty,
-            MAX(si.price) as price,
-            SUM(si.qty * si.price) as total_revenue,
-            MAX(s.sale_date) as created_at,
-            s.payment_method
-        FROM sales s
-        JOIN sales_items si ON s.id = si.sale_id
-        WHERE s.customer_id = ?
-        GROUP BY si.product_name, s.payment_method
-        ORDER BY total_revenue DESC
-    `;
-    db.query(sql, [customerId], (err, results) => {
-        if (err) return res.status(500).json(err);
-        res.json(results);
-    });
+    db.query(
+        `SELECT si.product_name, SUM(si.qty) as total_qty, MAX(si.price) as price, SUM(si.qty * si.price) as total_revenue, MAX(s.sale_date) as created_at, s.payment_method FROM sales s JOIN sales_items si ON s.id = si.sale_id WHERE s.customer_id = ? GROUP BY si.product_name, s.payment_method ORDER BY total_revenue DESC`,
+        [req.params.id], (err, results) => { if (err) return res.status(500).json(err); res.json(results); }
+    );
 });
 
+app.get('/', (req, res) => { res.send("POS API running..."); });
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-});
+app.listen(PORT, () => { console.log(`Server running on http://localhost:${PORT}`); });
