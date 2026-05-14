@@ -432,6 +432,13 @@ app.get('/api/receipts/:id', (req, res) => {
 // ─────────────────────────────────────────
 
 app.get('/api/inventory', (req, res) => {
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const formattedStart = startOfWeek.toISOString().split('T')[0];
+
+    // Sum portions sold this week per material, then convert to kg inside JS
     const sql = `
         SELECT 
             i.id,
@@ -439,55 +446,52 @@ app.get('/api/inventory', (req, res) => {
             i.unit_measure,
             i.opening_stock,
             i.added_stock,
-            COALESCE(usage_data.total_kg_used, 0) AS total_kg_used
+            y.yield_per_unit,
+            COALESCE(SUM(si.qty), 0) AS total_portions_sold
         FROM inventory i
-        LEFT JOIN (
-            SELECT 
-                yr.material_name,
-                SUM(si.qty / yr.yield_per_unit) AS total_kg_used
-            FROM yield_rules yr
-            JOIN sales_items si 
-                ON si.product_name = yr.menu_item_name
-            JOIN sales s
-                ON s.id = si.sale_id
-            WHERE s.payment_status = 'Completed'
-            GROUP BY yr.material_name
-        ) usage_data
-        ON usage_data.material_name = i.item_name
-        ORDER BY i.item_name ASC
+        LEFT JOIN yield_rules y      ON i.item_name = y.material_name
+        LEFT JOIN sales_items si     ON y.menu_item_name = si.product_name
+        LEFT JOIN sales s            ON si.sale_id = s.id
+                                    AND s.payment_status = 'Completed'
+                                    AND s.sale_date >= ?
+        GROUP BY i.id, i.item_name, i.unit_measure, i.opening_stock, i.added_stock, y.yield_per_unit
     `;
 
-    db.query(sql, (err, results) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).json(err);
-        }
+    db.query(sql, [formattedStart], (err, results) => {
+        if (err) return res.status(500).json(err);
 
-        const formatted = results.map(item => {
+        const inventoryWithCalculations = results.map(item => {
+            const opening      = parseFloat(item.opening_stock)      || 0;
+            const added        = parseFloat(item.added_stock)        || 0;
+            const yieldPerUnit = parseFloat(item.yield_per_unit)     || 1;
+            const portions     = parseFloat(item.total_portions_sold)|| 0;
 
-            const opening = Number(item.opening_stock || 0);
-            const added   = Number(item.added_stock || 0);
-            const usedKg  = Number(item.total_kg_used || 0);
+            // KEY: portions → kg, then subtract from physical stock
+            const kgUsed    = portions / yieldPerUnit;
+            const closingKg = opening + added - kgUsed;
 
-            // REAL REMAINING STOCK
-            const remaining = opening + added - usedKg;
+            const weightMatch = item.unit_measure ? item.unit_measure.match(/(\d+)/) : null;
+            const unitWeight  = weightMatch ? parseInt(weightMatch[0]) : 1;
+
+            let displayStock, displayOpening;
+            if (item.item_name.toLowerCase().includes("potato")) {
+                displayStock   = `${Math.floor(closingKg)} (${item.unit_measure} each)`;
+                displayOpening = `${opening} (${item.unit_measure})`;
+            } else {
+                displayStock   = `${(closingKg * unitWeight).toFixed(2)} kg`;
+                displayOpening = `${(opening  * unitWeight).toFixed(2)} kg`;
+            }
 
             return {
                 ...item,
-
-                units_sold: Number(usedKg.toFixed(2)),
-
-                stock_quantity: Number(
-                    Math.max(0, remaining).toFixed(2)
-                ),
-
-                displayOpening: `${opening.toFixed(2)} kg`,
-
-                displayStock: `${Math.max(0, remaining).toFixed(2)} kg`
+                displayOpening,
+                displayStock,
+                stock_quantity: parseFloat(closingKg.toFixed(2)),
+                units_sold:     parseFloat(kgUsed.toFixed(2))
             };
         });
 
-        res.json(formatted);
+        res.json(inventoryWithCalculations);
     });
 });
 
@@ -587,98 +591,96 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
 // ─────────────────────────────────────────
 
 app.get('/api/inventory/audit-report', (req, res) => {
-
     const sql = `
-        SELECT
+        SELECT 
             i.item_name,
             i.unit_measure,
             i.opening_stock,
             i.added_stock,
-            yr.menu_item_name,
-            yr.yield_per_unit,
-            COALESCE(SUM(si.qty), 0) AS total_sold
+            y.menu_item_name,
+            y.yield_per_unit,
+            (
+                SELECT COALESCE(SUM(si.qty), 0)
+                FROM sales_items si
+                JOIN sales s ON si.sale_id = s.id
+                WHERE si.product_name = y.menu_item_name
+                AND s.payment_status = 'Completed'
+            ) as total_sold
         FROM inventory i
-        LEFT JOIN yield_rules yr
-            ON yr.material_name = i.item_name
-        LEFT JOIN sales_items si
-            ON si.product_name = yr.menu_item_name
-        LEFT JOIN sales s
-            ON s.id = si.sale_id
-            AND s.payment_status = 'Completed'
-        GROUP BY
-            i.item_name,
-            yr.menu_item_name,
-            yr.yield_per_unit
+        LEFT JOIN yield_rules y ON i.item_name = y.material_name
     `;
 
     db.query(sql, (err, results) => {
+        if (err) return res.status(500).json(err);
 
-        if (err) {
-            console.error(err);
-            return res.status(500).json(err);
-        }
-
-        const report = [];
-
-        const grouped = {};
+        const groupedAudit = {};
 
         results.forEach(row => {
-
-            if (!grouped[row.item_name]) {
-                grouped[row.item_name] = {
-                    item: row.item_name,
-                    unit: row.unit_measure,
-                    opening: Number(row.opening_stock || 0),
-                    added: Number(row.added_stock || 0),
-                    soldBreakdown: [],
-                    totalKgUsed: 0,
-                    totalPortions: 0
+            const key = row.item_name;
+            if (!groupedAudit[key]) {
+                groupedAudit[key] = {
+                    name:           row.item_name,
+                    unit:           row.unit_measure,
+                    totalStartStore:(parseFloat(row.opening_stock) || 0) + (parseFloat(row.added_stock) || 0),
+                    soldMap:        {}
                 };
             }
-
-            const qty = Number(row.total_sold || 0);
-            const yieldValue = Number(row.yield_per_unit || 1);
-
-            const kgUsed = qty / yieldValue;
-
-            grouped[row.item_name].totalKgUsed += kgUsed;
-            grouped[row.item_name].totalPortions += qty;
-
-            if (qty > 0) {
-                grouped[row.item_name].soldBreakdown.push({
-                    name: row.menu_item_name,
-                    qty
-                });
+            if (row.menu_item_name && parseFloat(row.total_sold) > 0) {
+                const menuKey = row.menu_item_name;
+                if (!groupedAudit[key].soldMap[menuKey]) {
+                    groupedAudit[key].soldMap[menuKey] = { name: menuKey, qty: 0, yield: parseFloat(row.yield_per_unit) || 1 };
+                }
+                groupedAudit[key].soldMap[menuKey].qty += parseFloat(row.total_sold) || 0;
             }
         });
 
-        Object.values(grouped).forEach(item => {
+        const finalReport = Object.values(groupedAudit).map(mat => {
+            const soldItems = Object.values(mat.soldMap);
+            let totalKgUsed = 0;
+            soldItems.forEach(item => { totalKgUsed += item.qty / item.yield; });
 
-            const totalStock =
-                item.opening +
-                item.added;
+            const exactRemaining  = mat.totalStartStore - totalKgUsed;
+            const wholeUnitsInStore = Math.floor(exactRemaining);
+            const unitDisplay = mat.unit || 'unit';
 
-            const remaining =
-                totalStock -
-                item.totalKgUsed;
+            const totalPortionsSold = soldItems.reduce((acc, i) => acc + i.qty, 0);
 
-            report.push({
-                item: item.item,
-                unit: item.unit,
-                totalSold: item.totalPortions,
-                soldBreakdown: item.soldBreakdown,
-                shouldBe: Number(
-                    Math.max(0, remaining).toFixed(2)
-                ),
-                hasShortage: remaining < 0,
-                message:
-                    `Started with ${totalStock.toFixed(2)}kg. ` +
-                    `Used ${item.totalKgUsed.toFixed(2)}kg from sales. ` +
-                    `Remaining stock should be ${Math.max(0, remaining).toFixed(2)}kg.`
-            });
+            let soldDetails = '';
+            if (soldItems.length === 1) {
+                soldDetails = `${soldItems[0].qty} portions of ${soldItems[0].name}`;
+            } else if (soldItems.length > 1) {
+                soldDetails = soldItems.map(si => `${si.qty} × ${si.name}`).join(', ') + ` (${totalPortionsSold} total)`;
+            }
+
+            const openUnitPortions     = soldItems[0]?.yield || 1;
+            const fractionalUsed       = totalKgUsed % 1;
+            const portionsLeftInOpen   = fractionalUsed > 0 ? Math.round((1 - fractionalUsed) * openUnitPortions) : 0;
+
+            let message = '';
+            if (soldItems.length > 0) {
+                if (wholeUnitsInStore < 0) {
+                    message = `Stock shortage! Sold: ${soldDetails}. Calculations show a deficit — please recount.`;
+                } else if (portionsLeftInOpen > 0) {
+                    message = `Sold: ${soldDetails}. ~${portionsLeftInOpen} portions remain in the open ${unitDisplay}. Store should have ${wholeUnitsInStore} full ${unitDisplay}.`;
+                } else {
+                    message = `Sold: ${soldDetails}. Store should have ${wholeUnitsInStore} full ${unitDisplay}.`;
+                }
+            } else {
+                message = `No sales recorded. Store should have ${mat.totalStartStore} ${unitDisplay}.`;
+            }
+
+            return {
+                item:          mat.name,
+                unit:          unitDisplay,
+                totalSold:     totalPortionsSold,
+                soldBreakdown: soldItems,
+                shouldBe:      Math.max(0, wholeUnitsInStore),
+                hasShortage:   wholeUnitsInStore < 0,
+                message
+            };
         });
 
-        res.json(report);
+        res.json(finalReport);
     });
 });
 
