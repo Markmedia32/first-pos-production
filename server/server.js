@@ -431,33 +431,45 @@ app.get('/api/receipts/:id', (req, res) => {
 // INVENTORY  (Option A — fully dynamic, never reads stock_quantity for balance)
 // ─────────────────────────────────────────
 
+// ─────────────────────────────────────────
+// INVENTORY
+// ─────────────────────────────────────────
+
 app.get('/api/inventory', (req, res) => {
+
     const sql = `
         SELECT 
             i.id,
             i.item_name,
             i.unit_measure,
+            i.stock_quantity,
             i.opening_stock,
             i.added_stock,
-            COALESCE(usage_data.total_kg_used, 0) AS total_kg_used
+            i.updated_at,
+
+            COALESCE((
+                SELECT SUM(
+                    CASE
+                        WHEN yr.yield_per_unit > 0
+                        THEN si.qty / yr.yield_per_unit
+                        ELSE 0
+                    END
+                )
+                FROM yield_rules yr
+                JOIN sales_items si 
+                    ON LOWER(si.product_name) = LOWER(yr.menu_item_name)
+                JOIN sales s 
+                    ON s.id = si.sale_id
+                WHERE LOWER(yr.material_name) = LOWER(i.item_name)
+                AND s.payment_status = 'Completed'
+            ), 0) AS units_sold
+
         FROM inventory i
-        LEFT JOIN (
-            SELECT 
-                yr.material_name,
-                SUM(si.qty / yr.yield_per_unit) AS total_kg_used
-            FROM yield_rules yr
-            JOIN sales_items si 
-                ON si.product_name = yr.menu_item_name
-            JOIN sales s
-                ON s.id = si.sale_id
-            WHERE s.payment_status = 'Completed'
-            GROUP BY yr.material_name
-        ) usage_data
-        ON usage_data.material_name = i.item_name
         ORDER BY i.item_name ASC
     `;
 
     db.query(sql, (err, results) => {
+
         if (err) {
             console.error(err);
             return res.status(500).json(err);
@@ -465,25 +477,23 @@ app.get('/api/inventory', (req, res) => {
 
         const formatted = results.map(item => {
 
-            const opening = Number(item.opening_stock || 0);
-            const added   = Number(item.added_stock || 0);
-            const usedKg  = Number(item.total_kg_used || 0);
-
-            // REAL REMAINING STOCK
-            const remaining = opening + added - usedKg;
+            const stockQty = parseFloat(item.stock_quantity || 0);
+            const soldQty  = parseFloat(item.units_sold || 0);
 
             return {
-                ...item,
+                id: item.id,
+                item_name: item.item_name,
+                unit_measure: item.unit_measure,
+                stock_quantity: stockQty,
+                opening_stock: parseFloat(item.opening_stock || 0),
+                added_stock: parseFloat(item.added_stock || 0),
+                updated_at: item.updated_at,
+                units_sold: soldQty.toFixed(2),
 
-                units_sold: Number(usedKg.toFixed(2)),
-
-                stock_quantity: Number(
-                    Math.max(0, remaining).toFixed(2)
-                ),
-
-                displayOpening: `${opening.toFixed(2)} kg`,
-
-                displayStock: `${Math.max(0, remaining).toFixed(2)} kg`
+                displayStock:
+                    item.unit_measure?.toLowerCase() === 'kg'
+                        ? `${stockQty.toFixed(2)} Kg`
+                        : `${stockQty.toFixed(2)} ${item.unit_measure}`
             };
         });
 
@@ -586,29 +596,41 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
 // AUDIT REPORT
 // ─────────────────────────────────────────
 
+// ─────────────────────────────────────────
+// INVENTORY AUDIT REPORT
+// ─────────────────────────────────────────
+
 app.get('/api/inventory/audit-report', (req, res) => {
 
     const sql = `
-        SELECT
+        SELECT 
             i.item_name,
             i.unit_measure,
-            i.opening_stock,
-            i.added_stock,
+            i.stock_quantity,
+
             yr.menu_item_name,
             yr.yield_per_unit,
-            COALESCE(SUM(si.qty), 0) AS total_sold
+
+            COALESCE(SUM(si.qty), 0) AS total_portions_sold
+
         FROM inventory i
+
         LEFT JOIN yield_rules yr
-            ON yr.material_name = i.item_name
+            ON LOWER(i.item_name) = LOWER(yr.material_name)
+
         LEFT JOIN sales_items si
-            ON si.product_name = yr.menu_item_name
+            ON LOWER(si.product_name) = LOWER(yr.menu_item_name)
+
         LEFT JOIN sales s
             ON s.id = si.sale_id
             AND s.payment_status = 'Completed'
-        GROUP BY
+
+        GROUP BY 
             i.item_name,
             yr.menu_item_name,
             yr.yield_per_unit
+
+        ORDER BY i.item_name ASC
     `;
 
     db.query(sql, (err, results) => {
@@ -618,67 +640,55 @@ app.get('/api/inventory/audit-report', (req, res) => {
             return res.status(500).json(err);
         }
 
-        const report = [];
-
         const grouped = {};
 
         results.forEach(row => {
 
             if (!grouped[row.item_name]) {
+
                 grouped[row.item_name] = {
                     item: row.item_name,
                     unit: row.unit_measure,
-                    opening: Number(row.opening_stock || 0),
-                    added: Number(row.added_stock || 0),
+                    current_stock: parseFloat(row.stock_quantity || 0),
                     soldBreakdown: [],
-                    totalKgUsed: 0,
-                    totalPortions: 0
+                    total_used: 0
                 };
             }
 
-            const qty = Number(row.total_sold || 0);
-            const yieldValue = Number(row.yield_per_unit || 1);
+            if (row.menu_item_name) {
 
-            const kgUsed = qty / yieldValue;
+                const portions = parseFloat(row.total_portions_sold || 0);
+                const yieldPer = parseFloat(row.yield_per_unit || 1);
 
-            grouped[row.item_name].totalKgUsed += kgUsed;
-            grouped[row.item_name].totalPortions += qty;
+                const qtyUsed = yieldPer > 0
+                    ? portions / yieldPer
+                    : 0;
 
-            if (qty > 0) {
                 grouped[row.item_name].soldBreakdown.push({
-                    name: row.menu_item_name,
-                    qty
+                    menu_item: row.menu_item_name,
+                    portions_sold: portions,
+                    quantity_used: qtyUsed.toFixed(2)
                 });
+
+                grouped[row.item_name].total_used += qtyUsed;
             }
         });
 
-        Object.values(grouped).forEach(item => {
+        const finalReport = Object.values(grouped).map(item => {
 
-            const totalStock =
-                item.opening +
-                item.added;
-
-            const remaining =
-                totalStock -
-                item.totalKgUsed;
-
-            report.push({
+            return {
                 item: item.item,
                 unit: item.unit,
-                totalSold: item.totalPortions,
+                current_stock: item.current_stock.toFixed(2),
+                total_used: item.total_used.toFixed(2),
                 soldBreakdown: item.soldBreakdown,
-                shouldBe: Number(
-                    Math.max(0, remaining).toFixed(2)
-                ),
-                hasShortage: remaining < 0,
+
                 message:
-                    `Started with ${totalStock.toFixed(2)}kg. ` +
-                    `Used ${item.totalKgUsed.toFixed(2)}kg from sales. ` +
-                    `Remaining stock should be ${Math.max(0, remaining).toFixed(2)}kg.`
-            });
+                    `${item.item} currently has ${item.current_stock.toFixed(2)} ${item.unit} remaining.`
+            };
         });
 
-        res.json(report);
+        res.json(finalReport);
     });
 });
 
