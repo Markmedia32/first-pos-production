@@ -37,8 +37,14 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 /* ─────────────────────────────────────────
    DEDUPLICATION
    The backend JOIN on yield_rules can produce multiple rows per
-   inventory item (one per menu_item linked to that material).
-   We merge them here: sum units_sold, keep the first display values.
+   inventory item when a material feeds more than one menu item
+   (e.g. Beans → "Beans" AND "Chapati Beans").
+   Strategy:
+     - Keep the FIRST row's display strings (backend already built them correctly)
+     - Accumulate units_sold across duplicate rows
+     - Recalculate stock_quantity from accumulated units_sold
+     - Rebuild displayStock using the SAME formula the backend uses,
+       so we never append our own units on top
 ───────────────────────────────────────── */
 const deduplicateStock = (rawItems) => {
   const map = new Map();
@@ -46,26 +52,31 @@ const deduplicateStock = (rawItems) => {
   rawItems.forEach(item => {
     const key = item.item_name;
     if (!map.has(key)) {
+      // Store a deep copy so we can mutate safely
       map.set(key, { ...item });
     } else {
       const existing = map.get(key);
-      // Accumulate kg used across all yield-rule rows for the same material
-      existing.units_sold = (parseFloat(existing.units_sold) || 0) + (parseFloat(item.units_sold) || 0);
 
-      // Recalculate closing stock from the accumulated usage
+      // Accumulate consumed units across all yield-rule rows
+      const prevSold = parseFloat(existing.units_sold) || 0;
+      const newSold  = parseFloat(item.units_sold)     || 0;
+      existing.units_sold = parseFloat((prevSold + newSold).toFixed(2));
+
+      // Recalculate closing balance in inventory units (packets / kg / pcs)
       const opening = parseFloat(existing.opening_stock) || 0;
       const added   = parseFloat(existing.added_stock)   || 0;
       existing.stock_quantity = parseFloat((opening + added - existing.units_sold).toFixed(2));
 
-      // Rebuild display strings
-      const unit        = existing.unit_measure || '';
-      const weightMatch = unit.match(/(\d+)/);
-      const unitWeight  = weightMatch ? parseInt(weightMatch[0]) : 1;
-
+      // Rebuild displayStock exactly as the backend does — no extra multiplications
+      const unit = existing.unit_measure || '';
       if (key.toLowerCase().includes('potato')) {
         existing.displayStock = `${Math.floor(existing.stock_quantity)} (${unit} each)`;
       } else {
-        existing.displayStock = `${(existing.stock_quantity * unitWeight).toFixed(2)} kg`;
+        // Backend stores in packets; extract weight from unit label (e.g. "2kg Packet" → 2)
+        const weightMatch = unit.match(/(\d+)/);
+        const unitWeight  = weightMatch ? parseInt(weightMatch[0]) : 1;
+        const displayKg   = existing.stock_quantity * unitWeight;
+        existing.displayStock = `${displayKg.toFixed(2)} kg`;
       }
     }
   });
@@ -312,8 +323,8 @@ const StockRow = ({ item, auditMessages, updateAmount, setUpdateAmount, handleQu
   const isLow        = item.stock_quantity < 5;
   const isEditing    = updateAmount.id === item.id;
 
-  // kg used this week — already correct from backend (or merged in dedup)
-  const kgUsed = parseFloat(item.units_sold || 0).toFixed(2);
+  // units_sold = inventory units consumed (packets/pcs/kg — matches unit_measure)
+  const consumed = parseFloat(item.units_sold || 0).toFixed(2);
 
   return (
     <tr style={{ background: isMismatched ? '#fff5f5' : '#fff', transition: 'background .2s' }}>
@@ -332,9 +343,8 @@ const StockRow = ({ item, auditMessages, updateAmount, setUpdateAmount, handleQu
       <td style={{ padding: '14px 16px' }}>
         <span style={{ color: '#10b981', fontWeight: 700, fontSize: 13 }}>+{item.added_stock}</span>
       </td>
-      {/* Show kg consumed, not raw portions */}
       <td style={{ padding: '14px 16px' }}>
-        <span style={{ color: '#ef4444', fontWeight: 700, fontSize: 13 }}>−{kgUsed} kg</span>
+        <span style={{ color: '#ef4444', fontWeight: 700, fontSize: 13 }}>−{consumed}</span>
       </td>
       <td style={{ padding: '14px 16px' }}>
         <div>
@@ -473,15 +483,9 @@ const Inventory = () => {
         axios.get(`${API}/api/inventory/audit-report`)
       ]);
 
-      // ── KEY FIX: collapse duplicate rows for the same material ──
-      const dedupedRaw = deduplicateStock(inv.data);
-
-      const processedStock = dedupedRaw.map(item => ({
-        ...item,
-        // units_sold here is kg consumed (set by backend or recalculated in dedup)
-        units_sold: parseFloat((item.units_sold || 0).toFixed(2)),
-        stock_quantity: parseFloat(item.stock_quantity || 0),
-      }));
+      // Collapse duplicate rows (backend JOIN on yield_rules emits one row per
+      // menu-item rule, so materials used in combos appear multiple times).
+      const processedStock = deduplicateStock(inv.data);
 
       setStock(processedStock);
       setAuditMessages(audit.data);
@@ -553,8 +557,8 @@ const Inventory = () => {
   /* ── DERIVED DATA ─────────────── */
   const totalActive  = stock.length;
   const totalAdded   = stock.reduce((a, c) => a + (parseFloat(c.added_stock) || 0), 0);
-  // Show total kg consumed this week across all materials
-  const totalKgUsed  = stock.reduce((a, c) => a + (parseFloat(c.units_sold) || 0), 0);
+  // Total units consumed across all materials (packets, pcs, kg — mixed units, indicative only)
+  const totalConsumed = stock.reduce((a, c) => a + (parseFloat(c.units_sold) || 0), 0);
   const shortageCount = auditMessages.filter(m => m.hasShortage).length;
   const todayHistory = weekHistory[selectedDate];
   const isToday      = selectedDate === today();
@@ -610,7 +614,7 @@ const Inventory = () => {
         <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
           <StatCard icon={Boxes}         label="Active Materials"       value={totalActive}  color="#0071e3" />
           <StatCard icon={ArrowUp}       label="Restocked This Week"    value={totalAdded}   color="#10b981" />
-          <StatCard icon={ArrowDown}     label="Total kg Used (Week)"   value={`${totalKgUsed.toFixed(2)} kg`} color="#ef4444" />
+          <StatCard icon={ArrowDown}     label="Consumed This Week"     value={totalConsumed.toFixed(2)}       color="#ef4444" />
           <StatCard
             icon={AlertTriangle}
             label="Stock Alerts"
