@@ -691,6 +691,15 @@ app.get('/api/inventory/audit-report', (req, res) => {
         res.json(finalReport);
     });
 });
+app.get('/api/inventory/yield-rules', (req, res) => {
+    db.query(
+        `SELECT menu_item_name, material_name, yield_per_unit FROM yield_rules ORDER BY material_name, menu_item_name`,
+        (err, results) => {
+            if (err) return res.status(500).json(err);
+            res.json(results);
+        }
+    );
+});
 
 // ─────────────────────────────────────────
 // REPORTS

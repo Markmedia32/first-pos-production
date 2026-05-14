@@ -1,993 +1,545 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
-import {
-  Package, Plus, AlertCircle, RefreshCcw, Edit, Save, X,
-  ArrowUp, ArrowDown, BarChart3, Calendar, ChevronLeft,
-  ChevronRight, TrendingDown, TrendingUp, Clock, Filter,
-  Eye, Activity, Layers, AlertTriangle, CheckCircle2,
-  History, Boxes
-} from 'lucide-react';
+import { useState, useEffect, useCallback } from "react";
 
-const API = import.meta.env.VITE_API_BASE_URL;
+// ─── CONFIG ─────────────────────────────────────────────────────────────────
+const API = "http://localhost:5000";
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
-const fmt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-const fmtISO = (d) => {
-  const dt = new Date(d);
-  const offset = dt.getTimezoneOffset();
-  return new Date(dt.getTime() - offset * 60000).toISOString().split('T')[0];
-};
-const today = () => fmtISO(new Date());
+// ─── HELPERS ────────────────────────────────────────────────────────────────
+const fmt  = (n, d = 2) => Number(n || 0).toFixed(d);
+const fmtK = (n)        => Number(n || 0).toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const userRole = () => localStorage.getItem("userRole") || "";
 
-const getWeekDays = (refDate = new Date()) => {
-  const d = new Date(refDate);
-  const day = d.getDay();
-  const sunday = new Date(d.setDate(d.getDate() - day));
-  return Array.from({ length: 7 }, (_, i) => {
-    const dd = new Date(sunday);
-    dd.setDate(sunday.getDate() + i);
-    return fmtISO(dd);
-  });
+// Status colour
+const statusColor = (pct) => {
+    if (pct <= 10)  return { bg: "#FCEBEB", text: "#A32D2D", label: "Critical" };
+    if (pct <= 25)  return { bg: "#FAEEDA", text: "#854F0B", label: "Low" };
+    if (pct <= 60)  return { bg: "#EAF3DE", text: "#3B6D11", label: "Adequate" };
+    return             { bg: "#E1F5EE", text: "#0F6E56", label: "Good" };
 };
 
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Plain‑English summary for one inventory item
+const plainEnglish = (item) => {
+    const closing  = Number(item.closing_balance);
+    const opening  = Number(item.opening_stock);
+    const added    = Number(item.added_stock);
+    const used     = Number(item.units_sold);
+    const unit     = item.unit_measure || "units";
+    const pct      = item.stock_pct;
+    const name     = item.item_name;
 
-/* ─────────────────────────────────────────
-   MINI COMPONENTS
-───────────────────────────────────────── */
-const Badge = ({ children, color = 'green' }) => {
-  const map = {
-    green: { bg: '#d1fae5', fg: '#065f46' },
-    red:   { bg: '#fee2e2', fg: '#991b1b' },
-    amber: { bg: '#fef3c7', fg: '#92400e' },
-    blue:  { bg: '#dbeafe', fg: '#1e40af' },
-    gray:  { bg: '#f3f4f6', fg: '#374151' },
-  };
-  const c = map[color] || map.green;
-  return (
-    <span style={{
-      background: c.bg, color: c.fg,
-      fontSize: 10, fontWeight: 700, padding: '3px 8px',
-      borderRadius: 20, letterSpacing: '0.5px', whiteSpace: 'nowrap'
-    }}>{children}</span>
-  );
+    let status = "";
+    if (pct <= 10)       status = "⚠️ Critically low — restock immediately.";
+    else if (pct <= 25)  status = "Stock is running low — consider restocking soon.";
+    else if (pct <= 60)  status = "Stock is at an adequate level.";
+    else                 status = "Stock levels are healthy.";
+
+    return `${name} started the period with ${fmt(opening)} ${unit}. ` +
+           `${added > 0 ? `An additional ${fmt(added)} ${unit} was received. ` : ""}` +
+           `Sales consumed ${fmt(used)} ${unit}, leaving a closing balance of ${fmt(closing)} ${unit} ` +
+           `(${fmt(pct, 1)}% of total available). ${status}`;
 };
 
-const StatCard = ({ icon: Icon, label, value, sub, color = '#0071e3', trend }) => (
-  <div style={{
-    background: '#fff', borderRadius: 16, padding: '20px 24px',
-    boxShadow: '0 1px 3px rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.04)',
-    display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: 160
-  }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-      <div style={{
-        width: 40, height: 40, borderRadius: 10, background: color + '18',
-        display: 'flex', alignItems: 'center', justifyContent: 'center'
-      }}>
-        <Icon size={18} color={color} />
-      </div>
-      {trend !== undefined && (
-        <span style={{ fontSize: 12, color: trend >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>
-          {trend >= 0 ? '↑' : '↓'} {Math.abs(trend)}
-        </span>
-      )}
-    </div>
-    <div>
-      <p style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#111', lineHeight: 1 }}>{value}</p>
-      <p style={{ margin: '4px 0 0', fontSize: 12, color: '#888', fontWeight: 500 }}>{label}</p>
-      {sub && <p style={{ margin: '2px 0 0', fontSize: 11, color: '#aaa' }}>{sub}</p>}
-    </div>
-  </div>
-);
+// ─── SUB‑COMPONENTS ─────────────────────────────────────────────────────────
 
-/* ─────────────────────────────────────────
-   DATE NAVIGATOR
-───────────────────────────────────────── */
-const DateNavigator = ({ selectedDate, onDateChange }) => {
-  const [weekOffset, setWeekOffset] = useState(0);
-
-  const weekDays = getWeekDays(new Date(
-    new Date().setDate(new Date().getDate() + weekOffset * 7)
-  ));
-
-  const weekLabel = () => {
-    const start = new Date(weekDays[0]);
-    const end = new Date(weekDays[6]);
-    if (weekOffset === 0) return 'This Week';
-    if (weekOffset === -1) return 'Last Week';
-    return `${start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
-  };
-
-  return (
-    <div style={{
-      background: '#fff', borderRadius: 16, padding: '16px 20px',
-      boxShadow: '0 1px 3px rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.04)',
-      marginBottom: 24
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-        <Calendar size={16} color="#666" />
-        <span style={{ fontWeight: 700, fontSize: 14, color: '#111' }}>{weekLabel()}</span>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          <button onClick={() => setWeekOffset(o => o - 1)} style={navBtnStyle}>
-            <ChevronLeft size={16} />
-          </button>
-          <button
-            onClick={() => { setWeekOffset(0); onDateChange(today()); }}
-            style={{ ...navBtnStyle, fontSize: 11, padding: '4px 10px', fontWeight: 700 }}
-          >
-            Today
-          </button>
-          <button
-            onClick={() => setWeekOffset(o => Math.min(o + 1, 0))}
-            disabled={weekOffset >= 0}
-            style={{ ...navBtnStyle, opacity: weekOffset >= 0 ? 0.3 : 1 }}
-          >
-            <ChevronRight size={16} />
-          </button>
+function StatCard({ label, value, sub, color }) {
+    return (
+        <div style={{
+            background: "var(--color-background-secondary)",
+            borderRadius: 8,
+            padding: "14px 18px",
+            minWidth: 0,
+        }}>
+            <p style={{ margin: 0, fontSize: 12, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 22, fontWeight: 500, color: color || "var(--color-text-primary)" }}>{value}</p>
+            {sub && <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--color-text-secondary)" }}>{sub}</p>}
         </div>
-      </div>
+    );
+}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
-        {weekDays.map((d, i) => {
-          const isSelected = d === selectedDate;
-          const isTod = d === today();
-          const isFuture = d > today();
-          return (
-            <button
-              key={d}
-              disabled={isFuture}
-              onClick={() => onDateChange(d)}
-              style={{
-                border: isSelected ? '2px solid #0071e3' : '2px solid transparent',
-                borderRadius: 10,
-                padding: '8px 4px',
-                background: isSelected ? '#0071e3' : isTod ? '#eff6ff' : '#f9fafb',
-                cursor: isFuture ? 'not-allowed' : 'pointer',
-                opacity: isFuture ? 0.35 : 1,
-                textAlign: 'center',
-                transition: 'all .15s',
-              }}
-            >
-              <div style={{ fontSize: 10, fontWeight: 600, color: isSelected ? '#fff' : '#888', marginBottom: 2 }}>
-                {DAYS[i]}
-              </div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: isSelected ? '#fff' : '#111' }}>
-                {new Date(d + 'T12:00:00').getDate()}
-              </div>
-              {isTod && !isSelected && (
-                <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#0071e3', margin: '3px auto 0' }} />
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
+function Badge({ label, bg, text }) {
+    return (
+        <span style={{
+            background: bg, color: text,
+            fontSize: 11, fontWeight: 500,
+            padding: "2px 9px", borderRadius: 20,
+            display: "inline-block", whiteSpace: "nowrap",
+        }}>{label}</span>
+    );
+}
 
-const navBtnStyle = {
-  border: '1px solid #e5e7eb', borderRadius: 8, padding: '4px 8px',
-  background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#374151'
-};
-
-/* ─────────────────────────────────────────
-   AUDIT CARD
-───────────────────────────────────────── */
-const AuditCard = ({ msg }) => {
-  const [open, setOpen] = useState(false);
-  // hasShortage is the server-computed flag (wholeUnitsInStore < 0 before clamping)
-  const isShortage = msg.hasShortage;
-  const hasSales = msg.totalSold > 0;
-  const status = isShortage ? 'red' : hasSales ? 'amber' : 'green';
-  const statusText = isShortage ? 'SHORTAGE' : hasSales ? 'IN USE' : 'FULL';
-
-  return (
-    <div style={{
-      background: '#fff', borderRadius: 14,
-      border: `1px solid ${isShortage ? '#fca5a5' : hasSales ? '#fcd34d' : '#d1fae5'}`,
-      overflow: 'hidden',
-      boxShadow: isShortage ? '0 0 0 3px #fef2f2' : '0 1px 3px rgba(0,0,0,.06)'
-    }}>
-      {/* Header */}
-      <div style={{
-        padding: '14px 16px', display: 'flex',
-        justifyContent: 'space-between', alignItems: 'center',
-        borderBottom: open ? '1px solid #f3f4f6' : 'none',
-        cursor: 'pointer', userSelect: 'none'
-      }} onClick={() => setOpen(o => !o)}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {isShortage ? <AlertTriangle size={16} color="#ef4444" /> :
-           hasSales ? <Activity size={16} color="#f59e0b" /> :
-           <CheckCircle2 size={16} color="#10b981" />}
-          <span style={{ fontWeight: 700, fontSize: 14 }}>{msg.item}</span>
+function ProgressBar({ pct, color }) {
+    return (
+        <div style={{ height: 5, background: "#E5E7EB", borderRadius: 4, marginTop: 4, overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(100, pct)}%`, height: "100%", background: color, borderRadius: 4, transition: "width 0.4s" }} />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Badge color={status}>{statusText}</Badge>
-          <span style={{ fontSize: 11, color: '#999' }}>{open ? '▲' : '▼'}</span>
-        </div>
-      </div>
+    );
+}
 
-      {/* Quick Summary (always visible) */}
-      <div style={{ padding: '10px 16px', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 80 }}>
-          <p style={{ margin: 0, fontSize: 10, color: '#999', fontWeight: 600, textTransform: 'uppercase' }}>Should Have</p>
-          {/* Use raw shouldBe from server — it reflects the true unclamped balance */}
-          <p style={{ margin: 0, fontSize: 18, fontWeight: 800, color: isShortage ? '#ef4444' : '#10b981' }}>
-            {isShortage ? '⚠ Deficit' : `${msg.shouldBe} `}
-            {!isShortage && <span style={{ fontSize: 12, fontWeight: 500 }}>{msg.unit}</span>}
-          </p>
+function Spinner() {
+    return (
+        <div style={{ textAlign: "center", padding: "3rem 0", color: "var(--color-text-secondary)", fontSize: 14 }}>
+            Loading inventory…
         </div>
-        <div style={{ flex: 1, minWidth: 80 }}>
-          <p style={{ margin: 0, fontSize: 10, color: '#999', fontWeight: 600, textTransform: 'uppercase' }}>Sold Today</p>
-          <p style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#e63946' }}>
-            {msg.totalSold} <span style={{ fontSize: 12, fontWeight: 500 }}>portions</span>
-          </p>
-        </div>
-      </div>
+    );
+}
 
-      {/* Expandable Details */}
-      {open && (
-        <div style={{ padding: '0 16px 14px', borderTop: '1px solid #f3f4f6' }}>
-          {/* Show the server-generated narrative message */}
-          <p style={{ margin: '10px 0 8px', fontSize: 12, color: '#555', lineHeight: 1.5 }}>{msg.message}</p>
+// ─── MODAL: RESTOCK ──────────────────────────────────────────────────────────
+function RestockModal({ item, onClose, onSuccess }) {
+    const [qty, setQty]     = useState("");
+    const [busy, setBusy]   = useState(false);
+    const [error, setError] = useState("");
 
-          {msg.soldBreakdown?.length > 0 ? (
-            <div style={{ marginTop: 8 }}>
-              <p style={{ margin: '0 0 8px', fontSize: 11, color: '#666', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Sold Breakdown
-              </p>
-              {msg.soldBreakdown.map((item, idx) => (
-                <div key={idx} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '6px 0', borderBottom: idx < msg.soldBreakdown.length - 1 ? '1px dashed #f3f4f6' : 'none'
-                }}>
-                  <span style={{ fontSize: 13, color: '#374151' }}>{item.name}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 12, color: '#888' }}>×</span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: '#e63946' }}>{item.qty}</span>
-                    <span style={{ fontSize: 11, color: '#aaa' }}>portions</span>
-                  </div>
+    const submit = async () => {
+        const amount = parseFloat(qty);
+        if (!amount || amount <= 0) { setError("Enter a valid quantity."); return; }
+        setBusy(true);
+        try {
+            const r = await fetch(`${API}/api/inventory/add-stock`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ item_id: item.id, quantity_to_add: amount }),
+            });
+            const d = await r.json();
+            if (d.success) { onSuccess(); onClose(); }
+            else setError("Server error — try again.");
+        } catch { setError("Network error."); }
+        setBusy(false);
+    };
+
+    return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: "var(--color-background-primary)", borderRadius: 12, padding: "28px 32px", width: 360, border: "0.5px solid var(--color-border-tertiary)" }}>
+                <h3 style={{ margin: "0 0 4px", fontWeight: 500, fontSize: 17 }}>Add stock — {item.item_name}</h3>
+                <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--color-text-secondary)" }}>
+                    Current closing balance: <strong>{fmt(item.closing_balance)} {item.unit_measure}</strong>
+                </p>
+                <label style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Quantity to add ({item.unit_measure})</label>
+                <input
+                    type="number" min="0" step="0.01"
+                    value={qty} onChange={e => { setQty(e.target.value); setError(""); }}
+                    style={{ display: "block", width: "100%", marginTop: 6, marginBottom: 4, boxSizing: "border-box" }}
+                    placeholder={`e.g. 5`}
+                    autoFocus
+                />
+                {error && <p style={{ color: "#A32D2D", fontSize: 12, margin: "4px 0 0" }}>{error}</p>}
+                <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
+                    <button onClick={onClose} style={{ background: "transparent" }}>Cancel</button>
+                    <button onClick={submit} disabled={busy} style={{ background: "#185FA5", color: "#fff", border: "none", padding: "8px 22px", borderRadius: 8, cursor: "pointer", fontWeight: 500 }}>
+                        {busy ? "Saving…" : "Confirm restock"}
+                    </button>
                 </div>
-              ))}
             </div>
-          ) : (
-            <p style={{ fontSize: 13, color: '#9ca3af', marginTop: 4 }}>No sales recorded yet this week.</p>
-          )}
-
-          {isShortage && (
-            <div style={{
-              marginTop: 12, padding: '10px 12px',
-              background: '#fef2f2', borderRadius: 8, border: '1px solid #fca5a5'
-            }}>
-              <p style={{ margin: 0, fontSize: 12, color: '#991b1b', fontWeight: 600 }}>
-                ⚠️ Stock deficit detected — physical recount required
-              </p>
-            </div>
-          )}
         </div>
-      )}
-    </div>
-  );
-};
+    );
+}
 
-/* ─────────────────────────────────────────
-   STOCK ROW
-   — item.displayStock and item.displayOpening are pre-formatted strings from the server
-   — item.units_sold is kg consumed (float), not portions
-   — item.stock_quantity is closing balance in kg (float)
-───────────────────────────────────────── */
-const StockRow = ({ item, auditMessages, updateAmount, setUpdateAmount, handleQuickUpdate, openEdit }) => {
-  const itemAudit = auditMessages.find(a => a.item === item.item_name);
-
-  // A discrepancy exists only when the server has flagged an actual shortage
-  const isMismatched = itemAudit?.hasShortage === true;
-
-  // Low stock: closing balance < 5 units (kg / packets)
-  const isLow = parseFloat(item.stock_quantity) < 5;
-  const isEditing = updateAmount.id === item.id;
-
-  return (
-    <tr style={{
-      background: isMismatched ? '#fff5f5' : '#fff',
-      transition: 'background .2s',
-    }}>
-      <td style={{ padding: '14px 16px' }}>
-        <div>
-          <span style={{ fontWeight: 700, fontSize: 14 }}>{item.item_name}</span>
-          {isMismatched && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-              <AlertTriangle size={11} color="#ef4444" />
-              <span style={{ color: '#ef4444', fontSize: 10, fontWeight: 600 }}>SHORTAGE</span>
-            </div>
-          )}
-        </div>
-      </td>
-
-      {/* Opening stock — pre-formatted by server */}
-      <td style={{ padding: '14px 16px', color: '#888', fontSize: 13 }}>
-        {item.displayOpening}
-      </td>
-
-      {/* Added stock this week */}
-      <td style={{ padding: '14px 16px' }}>
-        <span style={{ color: '#10b981', fontWeight: 700, fontSize: 13 }}>
-          +{parseFloat(item.added_stock || 0).toFixed(2)}
-        </span>
-      </td>
-
-      {/* kg consumed (derived from portions sold ÷ yield) */}
-      <td style={{ padding: '14px 16px' }}>
-        <span style={{ color: '#ef4444', fontWeight: 700, fontSize: 13 }}>
-          −{parseFloat(item.units_sold || 0).toFixed(2)} kg
-        </span>
-      </td>
-
-      {/* Closing balance — pre-formatted by server */}
-      <td style={{ padding: '14px 16px' }}>
-        <div>
-          <span style={{
-            fontWeight: 800, fontSize: 16,
-            color: (isLow || isMismatched) ? '#ef4444' : '#111'
-          }}>
-            {item.displayStock}
-          </span>
-          {isMismatched && itemAudit && (
-            <div style={{ fontSize: 11, color: '#ef4444', marginTop: 1, fontWeight: 600 }}>
-              Deficit — recount required
-            </div>
-          )}
-        </div>
-      </td>
-
-      <td style={{ padding: '14px 16px' }}>
-        <Badge color={isMismatched ? 'red' : isLow ? 'amber' : 'green'}>
-          {isMismatched ? 'Shortage' : isLow ? 'Low Stock' : 'Optimal'}
-        </Badge>
-      </td>
-
-      {/* Quick restock: adds to added_stock */}
-      <td style={{ padding: '14px 16px' }}>
-        {isEditing ? (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              autoFocus
-              placeholder="Qty"
-              style={{
-                width: 70, padding: '6px 10px', border: '2px solid #0071e3',
-                borderRadius: 8, fontSize: 13, fontWeight: 600, outline: 'none'
-              }}
-              onChange={(e) => setUpdateAmount({ ...updateAmount, val: e.target.value })}
-            />
-            <button
-              onClick={() => handleQuickUpdate(item.id)}
-              style={{ ...btnPrimary, padding: '6px 10px' }}
-            >
-              <Save size={13} />
-            </button>
-            <button
-              onClick={() => setUpdateAmount({ id: null, val: '' })}
-              style={{ ...btnOutline, padding: '6px 10px' }}
-            >
-              <X size={13} />
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => setUpdateAmount({ id: item.id, val: '' })}
-            style={btnOutline}
-          >
-            <ArrowUp size={13} /> Restock
-          </button>
-        )}
-      </td>
-
-      <td style={{ padding: '14px 16px' }}>
-        <button onClick={() => openEdit(item)} style={{ ...btnOutline, color: '#6366f1', borderColor: '#c7d2fe' }}>
-          <Edit size={13} /> Edit
-        </button>
-      </td>
-    </tr>
-  );
-};
-
-const btnPrimary = {
-  display: 'flex', alignItems: 'center', gap: 5,
-  background: '#0071e3', color: '#fff', border: 'none',
-  borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600,
-  cursor: 'pointer', whiteSpace: 'nowrap'
-};
-const btnOutline = {
-  display: 'flex', alignItems: 'center', gap: 5,
-  background: '#fff', color: '#374151', border: '1px solid #e5e7eb',
-  borderRadius: 8, padding: '7px 12px', fontSize: 12, fontWeight: 600,
-  cursor: 'pointer', whiteSpace: 'nowrap'
-};
-
-/* ─────────────────────────────────────────
-   MODAL
-───────────────────────────────────────── */
-const Modal = ({ title, onClose, children }) => (
-  <div style={{
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 1000, padding: 20
-  }}>
-    <div style={{
-      background: '#fff', borderRadius: 20, padding: 28,
-      width: '100%', maxWidth: 460, maxHeight: '90vh', overflowY: 'auto',
-      boxShadow: '0 20px 60px rgba(0,0,0,.2)'
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
-        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>{title}</h3>
-        <button onClick={onClose} style={{ border: 'none', background: '#f3f4f6', borderRadius: 8, padding: '6px', cursor: 'pointer' }}>
-          <X size={16} />
-        </button>
-      </div>
-      {children}
-    </div>
-  </div>
-);
-
-const Field = ({ label, hint, ...props }) => (
-  <div style={{ marginBottom: 16 }}>
-    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-      {label}
-    </label>
-    {hint && <p style={{ margin: '0 0 6px', fontSize: 11, color: '#9ca3af' }}>{hint}</p>}
-    <input
-      style={{
-        width: '100%', padding: '10px 14px', border: '2px solid #e5e7eb',
-        borderRadius: 10, fontSize: 14, outline: 'none', boxSizing: 'border-box',
-        transition: 'border-color .15s'
-      }}
-      onFocus={e => e.target.style.borderColor = '#0071e3'}
-      onBlur={e => e.target.style.borderColor = '#e5e7eb'}
-      {...props}
-    />
-  </div>
-);
-
-/* ─────────────────────────────────────────
-   WEEKLY RESET BUTTON (Admin only)
-───────────────────────────────────────── */
-const WeeklyResetButton = ({ API, onDone }) => {
-  const [loading, setLoading] = useState(false);
-  const handleReset = async () => {
-    if (!window.confirm('Roll over weekly stock? This sets new opening balances and clears added_stock. Do this on Sunday midnight only.')) return;
-    setLoading(true);
-    try {
-      await axios.post(`${API}/api/inventory/weekly-reset`, {}, { headers: { 'user-role': 'Admin' } });
-      alert('Weekly reset complete.');
-      onDone();
-    } catch {
-      alert('Reset failed — check server logs.');
-    } finally {
-      setLoading(false);
-    }
-  };
-  return (
-    <button onClick={handleReset} disabled={loading} style={{
-      ...btnOutline,
-      color: '#d97706', borderColor: '#fcd34d',
-      background: '#fffbeb'
-    }}>
-      <RefreshCcw size={14} /> {loading ? 'Resetting…' : 'Weekly Reset'}
-    </button>
-  );
-};
-
-/* ─────────────────────────────────────────
-   MAIN COMPONENT
-───────────────────────────────────────── */
-const Inventory = () => {
-  const [stock, setStock] = useState([]);
-  const [auditMessages, setAuditMessages] = useState([]);
-  const [selectedDate, setSelectedDate] = useState(today());
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview');
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [updateAmount, setUpdateAmount] = useState({ id: null, val: '' });
-  const [weekHistory, setWeekHistory] = useState({});
-
-  const [newItem, setNewItem] = useState({ item_name: '', unit_measure: '', stock_quantity: 0 });
-
-  /*
-   * editForm only exposes fields the server actually uses:
-   *   item_name, unit_measure, opening_stock, added_stock
-   * stock_quantity is intentionally excluded — the server recomputes it.
-   */
-  const [editForm, setEditForm] = useState({
-    id: null,
-    item_name: '',
-    unit_measure: '',
-    opening_stock: 0,
-    added_stock: 0,
-  });
-
-  /* ── DATA LOADING ─────────────── */
-  const loadData = useCallback(async (date = selectedDate) => {
-    setLoading(true);
-    try {
-      const [inv, audit] = await Promise.all([
-        axios.get(`${API}/api/inventory`),
-        axios.get(`${API}/api/inventory/audit-report`)
-      ]);
-
-      /*
-       * Server already computes:
-       *   displayStock   — formatted closing balance string  e.g. "4.20 kg"
-       *   displayOpening — formatted opening balance string  e.g. "10.00 kg"
-       *   stock_quantity — closing balance as float (kg)
-       *   units_sold     — kg consumed this week (float), NOT portions
-       *   added_stock    — kg restocked this week
-       *
-       * We keep the data as-is; no client-side recalculation needed.
-       */
-      setStock(inv.data);
-      setAuditMessages(audit.data);
-
-      // Load daily sales for the history tab
-      try {
-        const daySales = await axios.get(`${API}/api/reports/sales-summary?date=${date}`);
-        setWeekHistory(prev => ({
-          ...prev,
-          [date]: {
-            itemized: daySales.data.itemized || [],
-            payments: daySales.data.payments || {}
-          }
-        }));
-      } catch {
-        // no sales for this date — expected
-      }
-    } catch (err) {
-      console.error('Load error', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedDate]);
-
-  useEffect(() => { loadData(selectedDate); }, [selectedDate]);
-
-  /* ── HANDLERS ─────────────────── */
-  const handleAddProduct = async (e) => {
-    e.preventDefault();
-    try {
-      await axios.post(`${API}/api/inventory/add-new`, newItem);
-      setShowAddModal(false);
-      setNewItem({ item_name: '', unit_measure: '', stock_quantity: 0 });
-      loadData(selectedDate);
-    } catch { alert('Error adding product'); }
-  };
-
-  /*
-   * Quick restock: POSTs to /api/inventory/add-stock
-   * Server adds to added_stock; closing balance recalculates automatically on next GET.
-   */
-  const handleQuickUpdate = async (id) => {
-    const qty = parseFloat(updateAmount.val);
-    if (!qty || qty <= 0) { alert('Enter a positive quantity'); return; }
-    try {
-      await axios.post(`${API}/api/inventory/add-stock`, { item_id: id, quantity_to_add: qty });
-      setUpdateAmount({ id: null, val: '' });
-      loadData(selectedDate);
-    } catch { alert('Restock failed'); }
-  };
-
-  const openEdit = (item) => {
-    setEditItem(item.id);
-    setEditForm({
-      id: item.id,
-      item_name: item.item_name,
-      unit_measure: item.unit_measure,
-      // opening_stock and added_stock come directly from the DB row
-      opening_stock: parseFloat(item.opening_stock) || 0,
-      added_stock:   parseFloat(item.added_stock)   || 0,
+// ─── MODAL: EDIT ITEM (Admin only) ───────────────────────────────────────────
+function EditModal({ item, onClose, onSuccess }) {
+    const [form, setForm] = useState({
+        item_name:     item.item_name,
+        unit_measure:  item.unit_measure,
+        opening_stock: item.opening_stock,
+        added_stock:   item.added_stock,
     });
-  };
+    const [busy, setBusy]   = useState(false);
+    const [error, setError] = useState("");
 
-  /*
-   * Save edit: PUTs to /api/inventory/update-item
-   * Server updates item_name, unit_measure, opening_stock, added_stock ONLY.
-   * stock_quantity is NOT sent — the server ignores it.
-   */
-  const saveEdit = async () => {
-    try {
-      await axios.put(`${API}/api/inventory/update-item`, {
-        id:            editForm.id,
-        item_name:     editForm.item_name,
-        unit_measure:  editForm.unit_measure,
-        opening_stock: Number(editForm.opening_stock),
-        added_stock:   Number(editForm.added_stock),
-      }, { headers: { 'user-role': 'Admin' } });
-      setEditItem(null);
-      loadData(selectedDate);
-    } catch {
-      alert('Failed to update item');
-    }
-  };
+    const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  /* ── DERIVED DATA ─────────────── */
-  const totalActive = stock.length;
+    const submit = async () => {
+        setBusy(true);
+        try {
+            const r = await fetch(`${API}/api/inventory/update-item`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json", "user-role": userRole() },
+                body: JSON.stringify({ id: item.id, ...form, opening_stock: Number(form.opening_stock), added_stock: Number(form.added_stock) }),
+            });
+            const d = await r.json();
+            if (d.success) { onSuccess(); onClose(); }
+            else setError(d.message || "Server error.");
+        } catch { setError("Network error."); }
+        setBusy(false);
+    };
 
-  // added_stock is in the same unit as the item (kg / packets)
-  const totalAdded = stock.reduce((a, c) => a + (parseFloat(c.added_stock) || 0), 0);
-
-  // units_sold from the server = kg consumed; sum for a meaningful "kg used" figure
-  const totalKgUsed = stock.reduce((a, c) => a + (parseFloat(c.units_sold) || 0), 0);
-
-  // shortage count from the audit's hasShortage flag — not a frontend recalculation
-  const shortageCount = auditMessages.filter(m => m.hasShortage === true).length;
-
-  const todayHistory = weekHistory[selectedDate];
-  const isToday = selectedDate === today();
-
-  const tabs = [
-    { id: 'overview', label: 'Live Stock', icon: Boxes },
-    { id: 'audit', label: 'Kitchen Audit', icon: AlertCircle, badge: shortageCount > 0 ? shortageCount : null },
-    { id: 'history', label: 'Daily Sales', icon: History },
-  ];
-
-  return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}>
-      {/* ── TOP HEADER ─── */}
-      <div style={{
-        background: '#fff', borderBottom: '1px solid #e5e7eb',
-        padding: '20px 32px', position: 'sticky', top: 0, zIndex: 100,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        flexWrap: 'wrap', gap: 12
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{
-            width: 44, height: 44, borderRadius: 12,
-            background: 'linear-gradient(135deg, #0071e3, #5e5ce6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
-          }}>
-            <Package size={22} color="#fff" />
-          </div>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: '#111', letterSpacing: '-0.3px' }}>
-              Digital Storehouse
-            </h1>
-            <p style={{ margin: 0, fontSize: 12, color: '#888' }}>
-              {isToday ? 'Viewing today' : `Viewing ${fmt(selectedDate)}`}
-              {loading && ' · Refreshing…'}
-            </p>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <WeeklyResetButton API={API} onDone={() => loadData(selectedDate)} />
-          <button onClick={() => loadData(selectedDate)} style={btnOutline}>
-            <RefreshCcw size={14} /> Refresh
-          </button>
-          <button onClick={() => setShowAddModal(true)} style={btnPrimary}>
-            <Plus size={15} /> Add Item
-          </button>
-        </div>
-      </div>
-
-      {/* ── BODY ─── */}
-      <div style={{ padding: '28px 32px', maxWidth: 1400, margin: '0 auto' }}>
-
-        {/* STAT CARDS */}
-        <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-          <StatCard icon={Boxes}         label="Active Materials"      value={totalActive}             color="#0071e3" />
-          <StatCard icon={ArrowUp}       label="Restocked This Week"   value={`${totalAdded.toFixed(2)} kg`} color="#10b981" />
-          <StatCard
-            icon={ArrowDown}
-            label="Consumed This Week"
-            value={`${totalKgUsed.toFixed(2)} kg`}
-            sub="Derived from sales × yield rules"
-            color="#ef4444"
-          />
-          <StatCard
-            icon={AlertTriangle}
-            label="Stock Alerts"
-            value={shortageCount}
-            color={shortageCount > 0 ? '#f59e0b' : '#10b981'}
-            sub={shortageCount > 0 ? 'Items need recount' : 'All stocked OK'}
-          />
-        </div>
-
-        {/* DATE NAVIGATOR */}
-        <DateNavigator selectedDate={selectedDate} onDateChange={setSelectedDate} />
-
-        {/* TABS */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: '#f1f5f9', borderRadius: 12, padding: 4 }}>
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              style={{
-                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                padding: '10px 16px', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600,
-                cursor: 'pointer', transition: 'all .15s', position: 'relative',
-                background: activeTab === tab.id ? '#fff' : 'transparent',
-                color: activeTab === tab.id ? '#0071e3' : '#666',
-                boxShadow: activeTab === tab.id ? '0 1px 4px rgba(0,0,0,.1)' : 'none'
-              }}
-            >
-              <tab.icon size={14} />
-              {tab.label}
-              {tab.badge && (
-                <span style={{
-                  position: 'absolute', top: 6, right: 8,
-                  background: '#ef4444', color: '#fff', borderRadius: 10,
-                  fontSize: 10, fontWeight: 800, padding: '1px 5px', lineHeight: 1.4
-                }}>{tab.badge}</span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* ── TAB: OVERVIEW (Live Stock Table) ─── */}
-        {activeTab === 'overview' && (
-          <div style={{
-            background: '#fff', borderRadius: 16,
-            boxShadow: '0 1px 3px rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.04)',
-            overflow: 'hidden'
-          }}>
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Current Inventory Levels</h3>
-                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#888' }}>
-                  Live stock — reflects all completed sales for the current weekly cycle (Sun–Sat)
-                </p>
-              </div>
-              <Badge color="blue">{stock.length} items</Badge>
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#f9fafb' }}>
-                    {['Material', 'Opening (Sun)', 'Added', 'Consumed (kg)', 'In Stock', 'Status', 'Restock', 'Actions'].map(h => (
-                      <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {stock.map((item, i) => (
-                    <React.Fragment key={item.id}>
-                      {i > 0 && <tr><td colSpan={8} style={{ padding: 0, borderTop: '1px solid #f3f4f6' }} /></tr>}
-                      <StockRow
-                        item={item}
-                        auditMessages={auditMessages}
-                        updateAmount={updateAmount}
-                        setUpdateAmount={setUpdateAmount}
-                        handleQuickUpdate={handleQuickUpdate}
-                        openEdit={openEdit}
-                      />
-                    </React.Fragment>
-                  ))}
-                </tbody>
-              </table>
-              {stock.length === 0 && !loading && (
-                <div style={{ padding: 48, textAlign: 'center', color: '#aaa' }}>
-                  <Boxes size={32} style={{ opacity: .3, marginBottom: 8 }} />
-                  <p style={{ margin: 0 }}>No inventory items found.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── TAB: AUDIT ─── */}
-        {activeTab === 'audit' && (
-          <div>
-            <div style={{ marginBottom: 16, padding: '14px 18px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 12, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-              <AlertTriangle size={16} color="#d97706" style={{ marginTop: 1, flexShrink: 0 }} />
-              <div>
-                <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#92400e' }}>How Kitchen Audit Works</p>
-                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#78350f' }}>
-                  Compares your <strong>opening + restocked stock</strong> against what the system calculates
-                  should remain based on actual sales and yield rules (portions ÷ yield = kg used).
-                  A shortage means a counting error, wastage, or unrecorded use.
-                </p>
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}>
-              {auditMessages.map((msg, i) => <AuditCard key={i} msg={msg} />)}
-            </div>
-            {auditMessages.length === 0 && (
-              <div style={{ padding: 48, textAlign: 'center', color: '#aaa' }}>
-                <CheckCircle2 size={32} style={{ opacity: .3, marginBottom: 8 }} />
-                <p style={{ margin: 0 }}>No audit data available.</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── TAB: HISTORY (Daily Sales) ─── */}
-        {activeTab === 'history' && (
-          <div>
-            <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Calendar size={16} color="#666" />
-              <span style={{ fontWeight: 700, fontSize: 14 }}>
-                Sales for {isToday ? 'Today' : fmt(selectedDate)}
-              </span>
-            </div>
-
-            {todayHistory?.payments && Object.values(todayHistory.payments).some(v => v > 0) ? (
-              <>
-                <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-                  {Object.entries(todayHistory.payments).filter(([, v]) => v > 0).map(([method, amount]) => (
-                    <div key={method} style={{
-                      background: '#fff', borderRadius: 12, padding: '14px 20px',
-                      border: '1px solid #e5e7eb', flex: 1, minWidth: 130
-                    }}>
-                      <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: '#888', textTransform: 'uppercase' }}>{method}</p>
-                      <p style={{ margin: '4px 0 0', fontSize: 20, fontWeight: 800 }}>
-                        KES {amount.toLocaleString()}
-                      </p>
+    return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: "var(--color-background-primary)", borderRadius: 12, padding: "28px 32px", width: 400, border: "0.5px solid var(--color-border-tertiary)" }}>
+                <h3 style={{ margin: "0 0 20px", fontWeight: 500 }}>Edit — {item.item_name}</h3>
+                {[
+                    { label: "Item name",     key: "item_name",     type: "text"   },
+                    { label: "Unit",          key: "unit_measure",  type: "text"   },
+                    { label: "Opening stock", key: "opening_stock", type: "number" },
+                    { label: "Added stock",   key: "added_stock",   type: "number" },
+                ].map(f => (
+                    <div key={f.key} style={{ marginBottom: 14 }}>
+                        <label style={{ fontSize: 13, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>{f.label}</label>
+                        <input type={f.type} value={form[f.key]} onChange={e => set(f.key, e.target.value)}
+                            style={{ width: "100%", boxSizing: "border-box" }} />
                     </div>
-                  ))}
+                ))}
+                {error && <p style={{ color: "#A32D2D", fontSize: 12 }}>{error}</p>}
+                <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
+                    <button onClick={onClose}>Cancel</button>
+                    <button onClick={submit} disabled={busy} style={{ background: "#185FA5", color: "#fff", border: "none", padding: "8px 22px", borderRadius: 8, cursor: "pointer", fontWeight: 500 }}>
+                        {busy ? "Saving…" : "Save changes"}
+                    </button>
                 </div>
-
-                <div style={{ background: '#fff', borderRadius: 16, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
-                  <div style={{ padding: '16px 20px', borderBottom: '1px solid #f3f4f6' }}>
-                    <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Items Sold</h4>
-                  </div>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ background: '#f9fafb' }}>
-                        {['Item', 'Qty Sold', 'Unit Price', 'Revenue'].map(h => (
-                          <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(todayHistory?.itemized || []).sort((a, b) => b.total_qty - a.total_qty).map((item, i) => (
-                        <tr key={i} style={{ borderTop: '1px solid #f3f4f6' }}>
-                          <td style={{ padding: '12px 16px', fontWeight: 600, fontSize: 14 }}>{item.product_name}</td>
-                          <td style={{ padding: '12px 16px' }}>
-                            <span style={{ fontWeight: 700, color: '#e63946' }}>{item.total_qty}</span>
-                          </td>
-                          <td style={{ padding: '12px 16px', color: '#666', fontSize: 13 }}>
-                            KES {Number(item.price).toFixed(0)}
-                          </td>
-                          <td style={{ padding: '12px 16px', fontWeight: 700, color: '#10b981' }}>
-                            KES {Number(item.total_revenue).toLocaleString()}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
-                        <td colSpan={2} style={{ padding: '12px 16px', fontWeight: 700, fontSize: 13 }}>Total</td>
-                        <td />
-                        <td style={{ padding: '12px 16px', fontWeight: 800, fontSize: 15, color: '#0071e3' }}>
-                          KES {(todayHistory?.itemized || []).reduce((a, c) => a + Number(c.total_revenue), 0).toLocaleString()}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </>
-            ) : (
-              <div style={{
-                background: '#fff', borderRadius: 16, padding: 48,
-                textAlign: 'center', border: '1px dashed #e5e7eb'
-              }}>
-                <History size={32} color="#d1d5db" style={{ marginBottom: 12 }} />
-                <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: '#374151' }}>
-                  {loading ? 'Loading sales data…' : `No sales recorded for ${isToday ? 'today' : fmt(selectedDate)}`}
-                </p>
-                <p style={{ margin: '6px 0 0', fontSize: 12, color: '#9ca3af' }}>
-                  Use the week navigator above to browse different days
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* ── ADD ITEM MODAL ─── */}
-      {showAddModal && (
-        <Modal title="Add New Store Item" onClose={() => setShowAddModal(false)}>
-          <form onSubmit={handleAddProduct}>
-            <Field
-              label="Item Name"
-              type="text"
-              placeholder="e.g. Wheat Flour"
-              required
-              value={newItem.item_name}
-              onChange={e => setNewItem({ ...newItem, item_name: e.target.value })}
-            />
-            <Field
-              label="Unit Measure"
-              type="text"
-              placeholder="e.g. 2kg Packet"
-              required
-              value={newItem.unit_measure}
-              onChange={e => setNewItem({ ...newItem, unit_measure: e.target.value })}
-            />
-            <Field
-              label="Opening Stock Quantity"
-              hint="Number of units/packets currently on hand"
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="0"
-              required
-              value={newItem.stock_quantity}
-              onChange={e => setNewItem({ ...newItem, stock_quantity: e.target.value })}
-            />
-            <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
-              <button type="submit" style={{ ...btnPrimary, flex: 1, justifyContent: 'center', padding: 12 }}>Save to Store</button>
-              <button type="button" onClick={() => setShowAddModal(false)} style={{ ...btnOutline, flex: 1, justifyContent: 'center', padding: 12 }}>Cancel</button>
             </div>
-          </form>
-        </Modal>
-      )}
+        </div>
+    );
+}
 
-      {/* ── EDIT MODAL ─── */}
-      {/*
-       * Only exposes fields the server uses for update-item:
-       *   item_name, unit_measure, opening_stock, added_stock
-       * stock_quantity is intentionally absent — it is always derived.
-       */}
-      {editItem && (
-        <Modal title="Edit Inventory Item" onClose={() => setEditItem(null)}>
-          <Field
-            label="Item Name"
-            value={editForm.item_name}
-            onChange={e => setEditForm({ ...editForm, item_name: e.target.value })}
-          />
-          <Field
-            label="Unit Measure"
-            value={editForm.unit_measure}
-            onChange={e => setEditForm({ ...editForm, unit_measure: e.target.value })}
-          />
-          <div style={{
-            marginBottom: 16, padding: '10px 14px', background: '#eff6ff',
-            border: '1px solid #bfdbfe', borderRadius: 10, fontSize: 12, color: '#1e40af'
-          }}>
-            ℹ️ <strong>Current balance</strong> is always calculated automatically from opening stock, restocked quantity, and sales.
-            Edit the values below to correct a miscounted opening or adjust a mid-week restock record.
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field
-              label="Opening Stock (Sun)"
-              hint="Units at week start"
-              type="number"
-              min="0"
-              step="0.01"
-              value={editForm.opening_stock}
-              onChange={e => setEditForm({ ...editForm, opening_stock: e.target.value })}
-            />
-            <Field
-              label="Added This Week"
-              hint="Cumulative restocks"
-              type="number"
-              min="0"
-              step="0.01"
-              value={editForm.added_stock}
-              onChange={e => setEditForm({ ...editForm, added_stock: e.target.value })}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-            <button onClick={saveEdit} style={{ ...btnPrimary, flex: 1, justifyContent: 'center', padding: 12 }}>Save Changes</button>
-            <button onClick={() => setEditItem(null)} style={{ ...btnOutline, flex: 1, justifyContent: 'center', padding: 12 }}>Cancel</button>
-          </div>
-        </Modal>
-      )}
+// ─── MODAL: ADD NEW ITEM ─────────────────────────────────────────────────────
+function AddItemModal({ onClose, onSuccess }) {
+    const [form, setForm] = useState({ item_name: "", unit_measure: "kg", stock_quantity: "" });
+    const [busy, setBusy]   = useState(false);
+    const [error, setError] = useState("");
 
-      <div style={{ padding: '16px 32px', textAlign: 'center' }}>
-        <span style={{ fontSize: 11, color: '#c4c9d4', fontWeight: 600, letterSpacing: '0.5px' }}>
-          First Class POS · CODEY CRAFT AFRICA
-        </span>
-      </div>
-    </div>
-  );
-};
+    const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-export default Inventory;
+    const submit = async () => {
+        if (!form.item_name || !form.stock_quantity) { setError("All fields are required."); return; }
+        setBusy(true);
+        try {
+            const r = await fetch(`${API}/api/inventory/add-new`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...form, stock_quantity: Number(form.stock_quantity) }),
+            });
+            const d = await r.json();
+            if (d.success) { onSuccess(); onClose(); }
+            else setError("Server error.");
+        } catch { setError("Network error."); }
+        setBusy(false);
+    };
+
+    return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: "var(--color-background-primary)", borderRadius: 12, padding: "28px 32px", width: 380, border: "0.5px solid var(--color-border-tertiary)" }}>
+                <h3 style={{ margin: "0 0 20px", fontWeight: 500 }}>Add new inventory item</h3>
+                {[
+                    { label: "Item name",          key: "item_name",      type: "text"   },
+                    { label: "Unit of measure",     key: "unit_measure",   type: "text"   },
+                    { label: "Opening stock qty",   key: "stock_quantity", type: "number" },
+                ].map(f => (
+                    <div key={f.key} style={{ marginBottom: 14 }}>
+                        <label style={{ fontSize: 13, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>{f.label}</label>
+                        <input type={f.type} value={form[f.key]} onChange={e => set(f.key, e.target.value)}
+                            style={{ width: "100%", boxSizing: "border-box" }} />
+                    </div>
+                ))}
+                {error && <p style={{ color: "#A32D2D", fontSize: 12 }}>{error}</p>}
+                <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
+                    <button onClick={onClose}>Cancel</button>
+                    <button onClick={submit} disabled={busy} style={{ background: "#0F6E56", color: "#fff", border: "none", padding: "8px 22px", borderRadius: 8, cursor: "pointer", fontWeight: 500 }}>
+                        {busy ? "Adding…" : "Add item"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─── MODAL: YIELD RULES ──────────────────────────────────────────────────────
+function YieldRulesModal({ onClose }) {
+    const [rules, setRules]   = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        fetch(`${API}/api/inventory/yield-rules`)
+            .then(r => r.json())
+            .then(d => { setRules(d); setLoading(false); })
+            .catch(() => setLoading(false));
+    }, []);
+
+    return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: "var(--color-background-primary)", borderRadius: 12, padding: "28px 32px", width: 560, maxHeight: "80vh", overflow: "auto", border: "0.5px solid var(--color-border-tertiary)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                    <h3 style={{ margin: 0, fontWeight: 500 }}>Yield rules</h3>
+                    <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--color-text-secondary)" }}>✕</button>
+                </div>
+                <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginTop: 0, marginBottom: 16 }}>
+                    These rules define how many portions of a menu item are produced per unit of raw material.
+                    For example: "1 kg of Beans → 4 portions of Beans dish".
+                </p>
+                {loading ? <Spinner /> : (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                            <tr style={{ borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
+                                {["Menu item", "Raw material", "Portions per unit"].map(h => (
+                                    <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 500, color: "var(--color-text-secondary)" }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rules.map((r, i) => (
+                                <tr key={i} style={{ borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
+                                    <td style={{ padding: "8px 10px" }}>{r.menu_item_name}</td>
+                                    <td style={{ padding: "8px 10px", color: "var(--color-text-secondary)" }}>{r.material_name}</td>
+                                    <td style={{ padding: "8px 10px" }}>{fmt(r.yield_per_unit)} portions / {r.unit || "unit"}</td>
+                                </tr>
+                            ))}
+                            {rules.length === 0 && (
+                                <tr><td colSpan={3} style={{ padding: "16px 10px", color: "var(--color-text-secondary)", textAlign: "center" }}>No rules found.</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
+export default function InventoryPage() {
+    const [items, setItems]           = useState([]);
+    const [loading, setLoading]       = useState(true);
+    const [search, setSearch]         = useState("");
+    const [filter, setFilter]         = useState("all");   // all | critical | low | adequate | good
+    const [restock, setRestock]       = useState(null);    // item being restocked
+    const [editing, setEditing]       = useState(null);    // item being edited
+    const [showAdd, setShowAdd]       = useState(false);
+    const [showYield, setShowYield]   = useState(false);
+    const [expanded, setExpanded]     = useState({});      // plain-English toggled rows
+    const [lastUpdated, setLastUpdated] = useState(null);
+
+    const isAdmin = userRole() === "Admin";
+
+    // Derive closing balance from what the API returns
+    const processItems = (raw) => raw.map(item => {
+        const opening  = Number(item.opening_stock  || 0);
+        const added    = Number(item.added_stock    || 0);
+        const sold     = Number(item.units_sold     || 0);
+        const total    = opening + added;
+        const closing  = Math.max(0, total - sold);
+        const pct      = total > 0 ? (closing / total) * 100 : 0;
+        return { ...item, closing_balance: closing, total_available: total, stock_pct: pct };
+    });
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const r = await fetch(`${API}/api/inventory`);
+            const d = await r.json();
+            setItems(processItems(d));
+            setLastUpdated(new Date());
+        } catch (e) {
+            console.error(e);
+        }
+        setLoading(false);
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
+
+    // Filtered + searched list
+    const visible = items.filter(item => {
+        const matchSearch = item.item_name.toLowerCase().includes(search.toLowerCase());
+        if (!matchSearch) return false;
+        if (filter === "all") return true;
+        const { label } = statusColor(item.stock_pct);
+        return label.toLowerCase() === filter;
+    });
+
+    // Summary stats
+    const critical = items.filter(i => i.stock_pct <= 10).length;
+    const low      = items.filter(i => i.stock_pct > 10 && i.stock_pct <= 25).length;
+    const adequate = items.filter(i => i.stock_pct > 25 && i.stock_pct <= 60).length;
+    const good     = items.filter(i => i.stock_pct > 60).length;
+
+    const toggleExpand = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
+
+    return (
+        <div style={{ padding: "24px 28px", maxWidth: 1100, margin: "0 auto", fontFamily: "var(--font-sans)" }}>
+            <h2 aria-hidden="true" style={{ display: "none" }}>Inventory management</h2>
+
+            {/* ── Header ── */}
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+                <div>
+                    <h2 style={{ margin: 0, fontWeight: 500, fontSize: 22 }}>Inventory</h2>
+                    {lastUpdated && (
+                        <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--color-text-secondary)" }}>
+                            Last refreshed {lastUpdated.toLocaleTimeString()}
+                        </p>
+                    )}
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button onClick={() => setShowYield(true)}>
+                        📋 Yield rules
+                    </button>
+                    {isAdmin && (
+                        <button onClick={() => setShowAdd(true)} style={{ background: "#0F6E56", color: "#fff", border: "none", padding: "8px 18px", borderRadius: 8, cursor: "pointer", fontWeight: 500 }}>
+                            + Add item
+                        </button>
+                    )}
+                    <button onClick={load} style={{ background: "transparent" }}>
+                        ↻ Refresh
+                    </button>
+                </div>
+            </div>
+
+            {/* ── Stat cards ── */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 24 }}>
+                <StatCard label="Total items"     value={items.length}  />
+                <StatCard label="Critical (≤10%)" value={critical}  color={critical  > 0 ? "#A32D2D" : undefined} />
+                <StatCard label="Low (≤25%)"      value={low}       color={low       > 0 ? "#854F0B" : undefined} />
+                <StatCard label="Adequate"        value={adequate}  />
+                <StatCard label="Good (>60%)"     value={good}      color="#0F6E56" />
+            </div>
+
+            {/* ── Filters + search ── */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
+                <input
+                    type="text"
+                    placeholder="Search item…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    style={{ width: 220 }}
+                />
+                {["all", "critical", "low", "adequate", "good"].map(f => (
+                    <button
+                        key={f}
+                        onClick={() => setFilter(f)}
+                        style={{
+                            background: filter === f ? "#185FA5" : "transparent",
+                            color: filter === f ? "#fff" : "var(--color-text-secondary)",
+                            border: filter === f ? "none" : "0.5px solid var(--color-border-tertiary)",
+                            borderRadius: 20,
+                            padding: "5px 16px",
+                            cursor: "pointer",
+                            fontSize: 13,
+                            textTransform: "capitalize",
+                        }}
+                    >
+                        {f}
+                    </button>
+                ))}
+                {(search || filter !== "all") && (
+                    <button onClick={() => { setSearch(""); setFilter("all"); }} style={{ fontSize: 13, color: "var(--color-text-secondary)", background: "transparent", border: "none", cursor: "pointer" }}>
+                        Clear
+                    </button>
+                )}
+            </div>
+
+            {/* ── Item list ── */}
+            {loading ? <Spinner /> : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {visible.length === 0 && (
+                        <p style={{ color: "var(--color-text-secondary)", textAlign: "center", padding: "2rem 0" }}>No items match your filter.</p>
+                    )}
+                    {visible.map(item => {
+                        const sc  = statusColor(item.stock_pct);
+                        const exp = expanded[item.id];
+                        return (
+                            <div key={item.id} style={{
+                                background: "var(--color-background-primary)",
+                                border: "0.5px solid var(--color-border-tertiary)",
+                                borderRadius: 12,
+                                padding: "16px 20px",
+                            }}>
+                                {/* Row 1 — name + badge + actions */}
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                    <span style={{ fontWeight: 500, fontSize: 15, flex: 1 }}>{item.item_name}</span>
+                                    <Badge label={sc.label} bg={sc.bg} text={sc.text} />
+                                    <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{item.unit_measure}</span>
+                                    <button onClick={() => toggleExpand(item.id)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 13, color: "#185FA5" }}>
+                                        {exp ? "Hide summary ▲" : "View summary ▼"}
+                                    </button>
+                                    <button onClick={() => setRestock(item)} style={{ background: "transparent", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: "4px 12px", cursor: "pointer", fontSize: 13 }}>
+                                        + Restock
+                                    </button>
+                                    {isAdmin && (
+                                        <button onClick={() => setEditing(item)} style={{ background: "transparent", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: "4px 12px", cursor: "pointer", fontSize: 13 }}>
+                                            Edit
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Row 2 — progress bar */}
+                                <ProgressBar pct={item.stock_pct} color={sc.text} />
+
+                                {/* Row 3 — number columns */}
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8, marginTop: 14 }}>
+                                    {[
+                                        { label: "Opening",  value: fmt(item.opening_stock) },
+                                        { label: "Received", value: fmt(item.added_stock)   },
+                                        { label: "Total in", value: fmt(item.total_available) },
+                                        { label: "Sold/Used",value: fmt(item.units_sold)    },
+                                        { label: "Closing",  value: fmt(item.closing_balance), bold: true },
+                                        { label: "% left",   value: `${fmt(item.stock_pct, 1)}%` },
+                                    ].map(col => (
+                                        <div key={col.label} style={{ background: "var(--color-background-secondary)", borderRadius: 8, padding: "8px 12px" }}>
+                                            <p style={{ margin: 0, fontSize: 11, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{col.label}</p>
+                                            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: col.bold ? 500 : 400 }}>{col.value}</p>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Row 4 — plain English (expandable) */}
+                                {exp && (
+                                    <div style={{
+                                        marginTop: 14,
+                                        background: "#F1EFE8",
+                                        borderRadius: 8,
+                                        padding: "12px 16px",
+                                        fontSize: 13,
+                                        lineHeight: 1.7,
+                                        color: "#2C2C2A",
+                                    }}>
+                                        <strong style={{ display: "block", marginBottom: 4, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em", color: "#5F5E5A" }}>Summary</strong>
+                                        {plainEnglish(item)}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* ── Admin: Weekly reset ── */}
+            {isAdmin && !loading && (
+                <div style={{ marginTop: 32, borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: 20 }}>
+                    <h3 style={{ fontWeight: 500, fontSize: 15, margin: "0 0 8px" }}>Admin actions</h3>
+                    <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: "0 0 12px" }}>
+                        The weekly reset rolls closing balances forward as new opening stock for the next week, then zeroes out the "added stock" column. Run this every Sunday night.
+                    </p>
+                    <WeeklyResetButton />
+                </div>
+            )}
+
+            {/* ── Modals ── */}
+            {restock   && <RestockModal  item={restock}  onClose={() => setRestock(null)}  onSuccess={load} />}
+            {editing   && <EditModal     item={editing}  onClose={() => setEditing(null)}  onSuccess={load} />}
+            {showAdd   && <AddItemModal                  onClose={() => setShowAdd(false)}  onSuccess={load} />}
+            {showYield && <YieldRulesModal               onClose={() => setShowYield(false)} />}
+        </div>
+    );
+}
+
+// ─── WEEKLY RESET BUTTON ─────────────────────────────────────────────────────
+function WeeklyResetButton() {
+    const [busy, setBusy]     = useState(false);
+    const [result, setResult] = useState("");
+
+    const run = async () => {
+        if (!window.confirm("This will roll over opening stock for all items. Continue?")) return;
+        setBusy(true); setResult("");
+        try {
+            const r = await fetch(`${API}/api/inventory/weekly-reset`, {
+                method: "POST",
+                headers: { "user-role": localStorage.getItem("userRole") || "" },
+            });
+            const d = await r.json();
+            setResult(d.success ? "✅ Weekly reset completed successfully." : `❌ ${d.message || "Error"}`);
+        } catch { setResult("❌ Network error."); }
+        setBusy(false);
+    };
+
+    return (
+        <div>
+            <button onClick={run} disabled={busy} style={{ background: "#712B13", color: "#fff", border: "none", padding: "8px 20px", borderRadius: 8, cursor: "pointer", fontWeight: 500 }}>
+                {busy ? "Running reset…" : "Run weekly stock reset"}
+            </button>
+            {result && <p style={{ marginTop: 8, fontSize: 13, color: "var(--color-text-secondary)" }}>{result}</p>}
+        </div>
+    );
+}
