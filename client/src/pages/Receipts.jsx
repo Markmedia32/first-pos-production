@@ -1,20 +1,28 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { Printer, X, Search, Eye, Calendar, User, CreditCard } from "lucide-react";
+import { Printer, X, Search, Eye, Pencil, Trash2, Plus } from "lucide-react";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 const Receipts = () => {
   const [receipts, setReceipts] = useState([]);
   const [selectedReceipt, setSelectedReceipt] = useState(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editItems, setEditItems] = useState([]);
   const [search, setSearch] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [menuItems, setMenuItems] = useState([]);
+
+  const isAdmin = (localStorage.getItem("userRole") || "") === "Admin";
 
   useEffect(() => {
     fetchReceipts();
+    // Load menu items for the dropdown
+    axios.get(`${API_BASE_URL}/api/menu`).then(res => setMenuItems(res.data || [])).catch(() => {});
   }, []);
 
   const fetchReceipts = async () => {
@@ -32,23 +40,72 @@ const Receipts = () => {
 
   const viewReceipt = async (id) => {
     setModalLoading(true);
-    setSelectedReceipt({ sale: null, items: [] }); // open modal immediately with loader
+    setEditMode(false);
+    setSelectedReceipt({ sale: null, items: [] });
     try {
       const res = await axios.get(`${API_BASE_URL}/api/receipts/${id}`);
-      setSelectedReceipt({
-        sale: res.data.sale || {},
-        items: res.data.items || []
-      });
+      setSelectedReceipt({ sale: res.data.sale || {}, items: res.data.items || [] });
+      setEditItems(res.data.items?.map(i => ({ ...i })) || []);
     } catch (err) {
-      console.error("View receipt error:", err);
       alert("Failed to load receipt");
       setSelectedReceipt(null);
     }
     setModalLoading(false);
   };
 
-  const closeModal = () => setSelectedReceipt(null);
+  const closeModal = () => {
+    setSelectedReceipt(null);
+    setEditMode(false);
+    setEditItems([]);
+  };
 
+  // ── Edit helpers ──
+  const updateItem = (index, field, value) => {
+    setEditItems(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+      return updated;
+    });
+  };
+
+  const removeItem = (index) => {
+    setEditItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const addItem = () => {
+    setEditItems(prev => [...prev, { product_name: "", qty: 1, price: 0 }]);
+  };
+
+  const editTotal = editItems.reduce((acc, item) =>
+    acc + (parseFloat(item.price) || 0) * (parseInt(item.qty) || 0), 0
+  );
+
+  const saveEdits = async () => {
+    if (editItems.length === 0) return alert("Cannot save a sale with no items.");
+    if (editItems.some(i => !i.product_name)) return alert("All items must have a product name.");
+
+    setSaving(true);
+    try {
+      const res = await axios.put(
+        `${API_BASE_URL}/api/receipts/${selectedReceipt.sale.id}/edit`,
+        { items: editItems, total_price: editTotal },
+        { headers: { "user-role": localStorage.getItem("userRole") || "" } }
+      );
+      if (res.data.success) {
+        // Reload the receipt and exit edit mode
+        await viewReceipt(selectedReceipt.sale.id);
+        setEditMode(false);
+        fetchReceipts(); // refresh the table too
+      } else {
+        alert(res.data.message || "Failed to save.");
+      }
+    } catch (err) {
+      alert("Network error saving changes.");
+    }
+    setSaving(false);
+  };
+
+  // ── Print ──
   const printReceipt = () => {
     const printContent = document.getElementById("receipt-box");
     if (!printContent) return;
@@ -65,7 +122,6 @@ const Receipts = () => {
             .divider { border-top: 1px dashed #000; margin: 10px 0; }
             .row { display: flex; justify-content: space-between; margin: 4px 0; }
             .restaurant-name { font-size: 18px; font-weight: bold; letter-spacing: 2px; }
-            .receipt-label { font-size: 11px; color: #555; }
             .grand-total { font-size: 15px; font-weight: bold; }
           </style>
         </head>
@@ -91,6 +147,8 @@ const Receipts = () => {
     (acc, item) => acc + parseFloat(item.price || 0) * parseInt(item.qty || 0), 0
   ) || 0;
 
+  const displayItems = editMode ? editItems : selectedReceipt?.items;
+
   return (
     <div className="receipts-container">
       <h2 className="receipts-title">Receipts</h2>
@@ -99,13 +157,8 @@ const Receipts = () => {
       <div className="receipts-filters">
         <div style={{ position: "relative", flex: 1 }}>
           <Search size={16} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9ca3af" }} />
-          <input
-            className="receipts-input"
-            placeholder="Search customer..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ paddingLeft: 32 }}
-          />
+          <input className="receipts-input" placeholder="Search customer..." value={search}
+            onChange={(e) => setSearch(e.target.value)} style={{ paddingLeft: 32 }} />
         </div>
         <input className="receipts-input" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
         <input className="receipts-input" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
@@ -138,14 +191,7 @@ const Receipts = () => {
                   <td>{r.client_name}</td>
                   <td style={{ fontWeight: 600 }}>{parseFloat(r.total_price).toLocaleString()}</td>
                   <td>
-                    <span style={{
-                      background: getPaymentBadgeColor(r.payment_method),
-                      color: "white",
-                      padding: "2px 8px",
-                      borderRadius: 4,
-                      fontSize: 11,
-                      fontWeight: 600
-                    }}>
+                    <span style={{ background: getPaymentBadgeColor(r.payment_method), color: "white", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>
                       {r.payment_method || "—"}
                     </span>
                   </td>
@@ -153,23 +199,15 @@ const Receipts = () => {
                     <span style={{
                       background: r.payment_status === "Completed" ? "#dcfce7" : r.payment_status === "Unpaid" ? "#fee2e2" : "#fef9c3",
                       color: r.payment_status === "Completed" ? "#15803d" : r.payment_status === "Unpaid" ? "#b91c1c" : "#92400e",
-                      padding: "2px 8px",
-                      borderRadius: 4,
-                      fontSize: 11,
-                      fontWeight: 600
+                      padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600
                     }}>
                       {r.payment_status}
                     </span>
                   </td>
-                  <td style={{ fontSize: 13, color: "#6b7280" }}>
-                    {new Date(r.sale_date).toLocaleString()}
-                  </td>
+                  <td style={{ fontSize: 13, color: "#6b7280" }}>{new Date(r.sale_date).toLocaleString()}</td>
                   <td>
-                    <button
-                      className="view-btn"
-                      onClick={() => viewReceipt(r.id)}
-                      style={{ display: "flex", alignItems: "center", gap: 4 }}
-                    >
+                    <button className="view-btn" onClick={() => viewReceipt(r.id)}
+                      style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <Eye size={14} /> View
                     </button>
                   </td>
@@ -182,61 +220,46 @@ const Receipts = () => {
 
       {/* ===== RECEIPT MODAL ===== */}
       {selectedReceipt !== null && (
-        <div
-          onClick={closeModal}
-          style={{
-            position: "fixed", inset: 0,
-            background: "rgba(0,0,0,0.6)",
-            zIndex: 1000,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16
-          }}
-        >
-          {/* Stop clicks inside the modal from closing it */}
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "white",
-              borderRadius: 12,
-              width: "100%",
-              maxWidth: 420,
-              maxHeight: "90vh",
-              overflowY: "auto",
-              boxShadow: "0 25px 60px rgba(0,0,0,0.35)"
-            }}
-          >
+        <div onClick={closeModal} style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+          zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: "white", borderRadius: 12, width: "100%",
+            maxWidth: editMode ? 560 : 420,
+            maxHeight: "90vh", overflowY: "auto",
+            boxShadow: "0 25px 60px rgba(0,0,0,0.35)",
+            transition: "max-width 0.2s"
+          }}>
+
             {/* Modal Header */}
-            <div style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-              padding: "16px 20px",
-              borderBottom: "1px solid #e5e7eb"
-            }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #e5e7eb" }}>
               <h3 style={{ margin: 0, fontWeight: 700, fontSize: 16 }}>
-                Receipt #{selectedReceipt?.sale?.id || "..."}
+                {editMode ? `✏️ Editing Sale #${selectedReceipt?.sale?.id}` : `Receipt #${selectedReceipt?.sale?.id || "..."}`}
               </h3>
               <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  onClick={printReceipt}
-                  style={{
+                {!editMode && (
+                  <button onClick={printReceipt} style={{
                     display: "flex", alignItems: "center", gap: 6,
-                    background: "#1d4ed8", color: "white",
-                    border: "none", borderRadius: 6,
-                    padding: "7px 14px", cursor: "pointer",
-                    fontSize: 13, fontWeight: 600
-                  }}
-                >
-                  <Printer size={15} /> Print
-                </button>
-                <button
-                  onClick={closeModal}
-                  style={{
-                    background: "#f3f4f6", border: "none",
-                    borderRadius: 6, padding: "7px 10px",
-                    cursor: "pointer", display: "flex", alignItems: "center"
-                  }}
-                >
+                    background: "#1d4ed8", color: "white", border: "none",
+                    borderRadius: 6, padding: "7px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600
+                  }}>
+                    <Printer size={15} /> Print
+                  </button>
+                )}
+                {isAdmin && !editMode && (
+                  <button onClick={() => setEditMode(true)} style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    background: "#f59e0b", color: "white", border: "none",
+                    borderRadius: 6, padding: "7px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600
+                  }}>
+                    <Pencil size={15} /> Edit Sale
+                  </button>
+                )}
+                <button onClick={closeModal} style={{
+                  background: "#f3f4f6", border: "none", borderRadius: 6,
+                  padding: "7px 10px", cursor: "pointer", display: "flex", alignItems: "center"
+                }}>
                   <X size={16} />
                 </button>
               </div>
@@ -245,90 +268,150 @@ const Receipts = () => {
             {/* Modal Body */}
             {modalLoading ? (
               <div style={{ padding: 40, textAlign: "center", color: "#9ca3af" }}>Loading receipt...</div>
-            ) : (
+            ) : editMode ? (
+              /* ── EDIT MODE ── */
               <div style={{ padding: 20 }}>
+                <p style={{ margin: "0 0 16px", fontSize: 13, color: "#6b7280" }}>
+                  Make corrections below. Changes will update the sale record and total.
+                </p>
 
-                {/* ===== PRINTABLE RECEIPT AREA ===== */}
+                {/* Edit items table */}
+                <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: "#f9fafb" }}>
+                        <th style={{ padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #e5e7eb", fontWeight: 600, color: "#374151" }}>Product</th>
+                        <th style={{ padding: "10px 8px", textAlign: "center", borderBottom: "1px solid #e5e7eb", fontWeight: 600, color: "#374151", width: 60 }}>Qty</th>
+                        <th style={{ padding: "10px 8px", textAlign: "right", borderBottom: "1px solid #e5e7eb", fontWeight: 600, color: "#374151", width: 80 }}>Price</th>
+                        <th style={{ padding: "10px 8px", textAlign: "center", borderBottom: "1px solid #e5e7eb", width: 40 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {editItems.map((item, i) => (
+                        <tr key={i} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                          <td style={{ padding: "8px 12px" }}>
+                            <select
+                              value={item.product_name}
+                              onChange={(e) => {
+                                const selected = menuItems.find(m => m.product_name === e.target.value);
+                                updateItem(i, "product_name", e.target.value);
+                                if (selected) updateItem(i, "price", selected.price);
+                              }}
+                              style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 13, outline: "none" }}
+                            >
+                              <option value="">— Select item —</option>
+                              {menuItems.map(m => (
+                                <option key={m.id} value={m.product_name}>{m.product_name}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td style={{ padding: "8px" }}>
+                            <input type="number" min="1" value={item.qty}
+                              onChange={(e) => updateItem(i, "qty", e.target.value)}
+                              style={{ width: "100%", padding: "6px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 13, textAlign: "center", outline: "none" }} />
+                          </td>
+                          <td style={{ padding: "8px" }}>
+                            <input type="number" min="0" value={item.price}
+                              onChange={(e) => updateItem(i, "price", e.target.value)}
+                              style={{ width: "100%", padding: "6px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 13, textAlign: "right", outline: "none" }} />
+                          </td>
+                          <td style={{ padding: "8px", textAlign: "center" }}>
+                            <button onClick={() => removeItem(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 4 }}>
+                              <Trash2 size={15} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Add item row */}
+                <button onClick={addItem} style={{
+                  display: "flex", alignItems: "center", gap: 6, background: "none",
+                  border: "1px dashed #d1d5db", borderRadius: 8, padding: "8px 14px",
+                  cursor: "pointer", color: "#6b7280", fontSize: 13, width: "100%",
+                  justifyContent: "center", marginBottom: 16
+                }}>
+                  <Plus size={14} /> Add item
+                </button>
+
+                {/* New total */}
+                <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15, padding: "12px 4px", borderTop: "2px solid #e5e7eb" }}>
+                  <span>New Total</span>
+                  <span style={{ color: "#2563eb" }}>Ksh {editTotal.toLocaleString()}</span>
+                </div>
+
+                {/* Action buttons */}
+                <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end" }}>
+                  <button onClick={() => setEditMode(false)} style={{
+                    padding: "9px 18px", borderRadius: 8, border: "1px solid #d1d5db",
+                    background: "#fff", color: "#374151", cursor: "pointer", fontSize: 13
+                  }}>
+                    Cancel
+                  </button>
+                  <button onClick={saveEdits} disabled={saving} style={{
+                    padding: "9px 18px", borderRadius: 8, border: "none",
+                    background: saving ? "#9ca3af" : "#059669", color: "white",
+                    cursor: saving ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 600
+                  }}>
+                    {saving ? "Saving…" : "Save Changes"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* ── VIEW MODE ── */
+              <div style={{ padding: 20 }}>
                 <div id="receipt-box" style={{ fontFamily: "'Courier New', monospace", fontSize: 13, color: "#111" }}>
-
-                  {/* Header */}
-                  <div className="center" style={{ textAlign: "center", marginBottom: 12 }}>
-                    <div className="restaurant-name bold" style={{ fontSize: 17, fontWeight: 700, letterSpacing: 2 }}>
-                      FIRST CLASS LOGISTICS
-                    </div>
+                  <div style={{ textAlign: "center", marginBottom: 12 }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: 2 }}>FIRST CLASS LOGISTICS</div>
                     <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>Official Receipt</div>
                   </div>
-
-                  <div className="divider" style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
-
-                  {/* Sale Info */}
+                  <div style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
                   <div style={{ marginBottom: 10 }}>
-                    <div className="row" style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span style={{ color: "#555", fontSize: 12 }}>Receipt #</span>
-                      <span style={{ fontWeight: 600 }}>{selectedReceipt.sale?.id}</span>
-                    </div>
-                    <div className="row" style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span style={{ color: "#555", fontSize: 12 }}>Customer</span>
-                      <span style={{ fontWeight: 600 }}>{selectedReceipt.sale?.client_name || "Guest"}</span>
-                    </div>
-                    <div className="row" style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span style={{ color: "#555", fontSize: 12 }}>Payment</span>
-                      <span style={{ fontWeight: 600 }}>{selectedReceipt.sale?.payment_method || "—"}</span>
-                    </div>
-                    <div className="row" style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span style={{ color: "#555", fontSize: 12 }}>Status</span>
-                      <span style={{ fontWeight: 600 }}>{selectedReceipt.sale?.payment_status}</span>
-                    </div>
-                    <div className="row" style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span style={{ color: "#555", fontSize: 12 }}>Date</span>
-                      <span>{new Date(selectedReceipt.sale?.sale_date).toLocaleString()}</span>
-                    </div>
+                    {[
+                      ["Receipt #", selectedReceipt.sale?.id],
+                      ["Customer", selectedReceipt.sale?.client_name || "Guest"],
+                      ["Payment", selectedReceipt.sale?.payment_method || "—"],
+                      ["Status", selectedReceipt.sale?.payment_status],
+                      ["Date", new Date(selectedReceipt.sale?.sale_date).toLocaleString()],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ color: "#555", fontSize: 12 }}>{label}</span>
+                        <span style={{ fontWeight: 600 }}>{value}</span>
+                      </div>
+                    ))}
                   </div>
-
-                  <div className="divider" style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
-
-                  {/* Items Header */}
+                  <div style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#888", marginBottom: 6 }}>
                     <span style={{ flex: 2 }}>ITEM</span>
                     <span style={{ textAlign: "center", flex: 1 }}>QTY</span>
                     <span style={{ textAlign: "right", flex: 1 }}>PRICE</span>
                     <span style={{ textAlign: "right", flex: 1 }}>TOTAL</span>
                   </div>
-
-                  {/* Items */}
                   {selectedReceipt.items?.length === 0 ? (
                     <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center" }}>No items found</p>
-                  ) : (
-                    selectedReceipt.items?.map((item, i) => (
-                      <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, fontSize: 13 }}>
-                        <span style={{ flex: 2 }}>{item.product_name}</span>
-                        <span style={{ textAlign: "center", flex: 1 }}>{item.qty}</span>
-                        <span style={{ textAlign: "right", flex: 1 }}>{parseFloat(item.price).toLocaleString()}</span>
-                        <span style={{ textAlign: "right", flex: 1, fontWeight: 600 }}>
-                          {(parseFloat(item.price) * parseInt(item.qty)).toLocaleString()}
-                        </span>
-                      </div>
-                    ))
-                  )}
-
-                  <div className="divider" style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
-
-                  {/* Total */}
-                  <div className="row grand-total" style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15 }}>
+                  ) : selectedReceipt.items?.map((item, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, fontSize: 13 }}>
+                      <span style={{ flex: 2 }}>{item.product_name}</span>
+                      <span style={{ textAlign: "center", flex: 1 }}>{item.qty}</span>
+                      <span style={{ textAlign: "right", flex: 1 }}>{parseFloat(item.price).toLocaleString()}</span>
+                      <span style={{ textAlign: "right", flex: 1, fontWeight: 600 }}>
+                        {(parseFloat(item.price) * parseInt(item.qty)).toLocaleString()}
+                      </span>
+                    </div>
+                  ))}
+                  <div style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
+                  <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15 }}>
                     <span>TOTAL</span>
                     <span>Ksh {parseFloat(selectedReceipt.sale?.total_price || subtotal).toLocaleString()}</span>
                   </div>
-
-                  <div className="divider" style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
-
-                  {/* Footer */}
-                  <div className="center" style={{ textAlign: "center", fontSize: 11, color: "#666", marginTop: 8 }}>
+                  <div style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
+                  <div style={{ textAlign: "center", fontSize: 11, color: "#666", marginTop: 8 }}>
                     <p>Thank you for dining with us!</p>
                     <p style={{ marginTop: 4, fontSize: 10 }}>Powered by Codey Craft Africa</p>
                   </div>
                 </div>
-                {/* ===== END PRINTABLE AREA ===== */}
-
               </div>
             )}
           </div>

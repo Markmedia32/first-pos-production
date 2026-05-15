@@ -823,6 +823,36 @@ app.get('/api/reports/customer-orders/:id', (req, res) => {
     );
 });
 
+// ─────────────────────────────────────────
+// EDIT SALE ITEMS (Admin only)
+// ─────────────────────────────────────────
+
+app.put('/api/receipts/:id/edit', (req, res) => {
+    if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ success: false, message: "Unauthorized" });
+
+    const saleId = req.params.id;
+    const { items, total_price } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ success: false, message: "No items provided" });
+    }
+
+    // Delete old items, insert new ones, update total
+    db.query("DELETE FROM sales_items WHERE sale_id = ?", [saleId], (delErr) => {
+        if (delErr) return res.status(500).json({ success: false, error: delErr.message });
+
+        const itemValues = items.map(item => [saleId, item.product_name, item.qty, item.price]);
+        db.query("INSERT INTO sales_items (sale_id, product_name, qty, price) VALUES ?", [itemValues], (insErr) => {
+            if (insErr) return res.status(500).json({ success: false, error: insErr.message });
+
+            db.query("UPDATE sales SET total_price = ? WHERE id = ?", [total_price, saleId], (updErr) => {
+                if (updErr) return res.status(500).json({ success: false, error: updErr.message });
+                res.json({ success: true, message: "Sale updated successfully" });
+            });
+        });
+    });
+});
+
 app.get('/', (req, res) => { res.send("POS API running..."); });
 
 const PORT = process.env.PORT || 5000;
