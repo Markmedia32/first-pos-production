@@ -37,6 +37,7 @@ const Login = () => {
     if (data.success) {
       console.log("🎉 LOGIN SUCCESS");
       localStorage.setItem('user', JSON.stringify(data.user));
+      localStorage.setItem('userRole', data.user.role); 
       navigate('/pos');
     } else {
       console.log("⚠️ LOGIN FAILED - NO SUCCESS FLAG");
