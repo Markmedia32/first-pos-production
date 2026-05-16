@@ -535,9 +535,11 @@ app.get('/api/inventory', (req, res) => {
                         };
                     }
                     if (row.menu_item_name && row.yield_per_unit > 0) {
-                        const portionsSold = portionsMap[row.menu_item_name] || 0;
-                        inventoryMap[key].total_units_used += portionsSold / row.yield_per_unit;
-                    }
+    // Case-insensitive lookup — finds "Big soda" even if rule says "Big Soda"
+    const ruleKey = row.menu_item_name.toLowerCase().trim();
+    const portionsSold = portionsMapLower[ruleKey] || 0;
+    inventoryMap[key].total_units_used += portionsSold / row.yield_per_unit;
+}
                 });
 
                 const result = Object.values(inventoryMap).map(item => {
@@ -618,6 +620,12 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
             if (salesErr) return res.status(500).json(salesErr);
 
             const portionsMap = buildPortionsMap(salesRows);
+
+            // Build a lowercase version for case-insensitive matching
+const portionsMapLower = {};
+Object.keys(portionsMap).forEach(k => {
+    portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
+});
 
             db.query(
                 `SELECT i.id, i.opening_stock, i.added_stock, y.menu_item_name, y.yield_per_unit
