@@ -61,8 +61,8 @@ const splitComboItems = (items) => {
             expanded.push({ product_name: "Rice",   qty: item.qty, price: 0 });
             expanded.push({ product_name: "Ndengu", qty: item.qty, price: 0 });
         } else if (name === "smocha") {
-    expanded.push({ product_name: "Chapati",  total_qty: qty, price: priceMap["chapati"]  || 0, total_revenue: (priceMap["chapati"]  || 0) * qty });
-    expanded.push({ product_name: "Smokies",  total_qty: qty, price: priceMap["smokies"]  || 0, total_revenue: (priceMap["smokies"]  || 0) * qty });
+    expanded.push({ product_name: "Chapati", qty: item.qty, price: 0 });
+    expanded.push({ product_name: "Smokies", qty: item.qty, price: 0 });
 } else {
     expanded.push(item);
 }
@@ -91,6 +91,9 @@ const expandComboForReports = async (items) => {
                 } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
                     expanded.push({ product_name: "Rice",   total_qty: qty, price: priceMap["rice"]   || 0, total_revenue: (priceMap["rice"]   || 0) * qty });
                     expanded.push({ product_name: "Ndengu", total_qty: qty, price: priceMap["ndengu"] || 0, total_revenue: (priceMap["ndengu"] || 0) * qty });
+                } else if (name === "smocha") {
+                    expanded.push({ product_name: "Chapati", total_qty: qty, price: priceMap["chapati"] || 0, total_revenue: (priceMap["chapati"] || 0) * qty });
+                    expanded.push({ product_name: "Smokies", total_qty: qty, price: priceMap["smokies"] || 0, total_revenue: (priceMap["smokies"] || 0) * qty });
                 } else {
                     expanded.push(item);
                 }
