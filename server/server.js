@@ -438,7 +438,6 @@ app.get('/api/inventory', (req, res) => {
     startOfWeek.setHours(0, 0, 0, 0);
     const formattedStart = startOfWeek.toISOString().split('T')[0];
 
-    // Step 1: Get all completed sales items this week (same source as Sales page)
     const salesSql = `
         SELECT si.product_name, SUM(si.qty) as total_qty
         FROM sales_items si
@@ -451,31 +450,8 @@ app.get('/api/inventory', (req, res) => {
     db.query(salesSql, [formattedStart], (salesErr, salesRows) => {
         if (salesErr) return res.status(500).json(salesErr);
 
-        // Step 2: Expand combos exactly like the Sales page does
-        const portionsMap = {};
+        const portionsMap = buildPortionsMap(salesRows);
 
-        salesRows.forEach(row => {
-            const name = row.product_name.toLowerCase();
-            const qty  = Number(row.total_qty || 0);
-
-            if (name.includes("chapati beans")) {
-                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
-                portionsMap["Beans"]   = (portionsMap["Beans"]   || 0) + qty;
-            } else if (name.includes("chapati ndengu")) {
-                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
-                portionsMap["Ndengu"]  = (portionsMap["Ndengu"]  || 0) + qty;
-            } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
-                portionsMap["Rice"]   = (portionsMap["Rice"]   || 0) + qty;
-                portionsMap["Ndengu"] = (portionsMap["Ndengu"] || 0) + qty;
-            } else if (name.includes("smocha")) {
-                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty;
-                portionsMap["Smokies"] = (portionsMap["Smokies"] || 0) + qty;
-            } else {
-                portionsMap[row.product_name] = (portionsMap[row.product_name] || 0) + qty;
-            }
-        });
-
-        // Step 3: Get inventory items with their yield rules
         const inventorySql = `
             SELECT 
                 i.id,
@@ -492,34 +468,31 @@ app.get('/api/inventory', (req, res) => {
         db.query(inventorySql, (invErr, invRows) => {
             if (invErr) return res.status(500).json(invErr);
 
-            // Step 4: Group by inventory item and calculate usage
             const inventoryMap = {};
 
             invRows.forEach(row => {
                 const key = row.id;
                 if (!inventoryMap[key]) {
                     inventoryMap[key] = {
-                        id:            row.id,
-                        item_name:     row.item_name,
-                        unit_measure:  row.unit_measure,
-                        opening_stock: row.opening_stock,
-                        added_stock:   row.added_stock,
+                        id:               row.id,
+                        item_name:        row.item_name,
+                        unit_measure:     row.unit_measure,
+                        opening_stock:    row.opening_stock,
+                        added_stock:      row.added_stock,
                         total_units_used: 0
                     };
                 }
 
-                // If this inventory item has a yield rule, calculate usage
                 if (row.menu_item_name && row.yield_per_unit > 0) {
                     const portionsSold = portionsMap[row.menu_item_name] || 0;
                     inventoryMap[key].total_units_used += portionsSold / row.yield_per_unit;
                 }
             });
 
-            // Step 5: Calculate closing stock
             const result = Object.values(inventoryMap).map(item => {
-                const opening   = parseFloat(item.opening_stock)      || 0;
-                const added     = parseFloat(item.added_stock)        || 0;
-                const unitsUsed = parseFloat(item.total_units_used)   || 0;
+                const opening   = parseFloat(item.opening_stock)    || 0;
+                const added     = parseFloat(item.added_stock)      || 0;
+                const unitsUsed = parseFloat(item.total_units_used) || 0;
                 const closing   = opening + added - unitsUsed;
 
                 return {
@@ -533,6 +506,10 @@ app.get('/api/inventory', (req, res) => {
         });
     });
 });
+
+// ─────────────────────────────────────────
+// WEEKLY RESET
+// ─────────────────────────────────────────
 
 app.post('/api/inventory/weekly-reset', (req, res) => {
     if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ message: "Unauthorized" });
@@ -555,27 +532,7 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
     db.query(salesSql, [formattedStart], (salesErr, salesRows) => {
         if (salesErr) return res.status(500).json(salesErr);
 
-        const portionsMap = {};
-        salesRows.forEach(row => {
-            const name = row.product_name.toLowerCase();
-            const qty  = Number(row.total_qty || 0);
-
-            if (name.includes("chapati beans")) {
-                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
-                portionsMap["Beans"]   = (portionsMap["Beans"]   || 0) + qty;
-            } else if (name.includes("chapati ndengu")) {
-                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
-                portionsMap["Ndengu"]  = (portionsMap["Ndengu"]  || 0) + qty;
-            } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
-                portionsMap["Rice"]   = (portionsMap["Rice"]   || 0) + qty;
-                portionsMap["Ndengu"] = (portionsMap["Ndengu"] || 0) + qty;
-            } else if (name.includes("smocha")) {
-                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty;
-                portionsMap["Smokies"] = (portionsMap["Smokies"] || 0) + qty;
-            } else {
-                portionsMap[row.product_name] = (portionsMap[row.product_name] || 0) + qty;
-            }
-        });
+        const portionsMap = buildPortionsMap(salesRows);
 
         const inventorySql = `
             SELECT i.id, i.opening_stock, i.added_stock,
@@ -592,9 +549,9 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
                 const key = row.id;
                 if (!inventoryMap[key]) {
                     inventoryMap[key] = {
-                        id: row.id,
-                        opening_stock: row.opening_stock,
-                        added_stock:   row.added_stock,
+                        id:               row.id,
+                        opening_stock:    row.opening_stock,
+                        added_stock:      row.added_stock,
                         total_units_used: 0
                     };
                 }
@@ -620,6 +577,7 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
         });
     });
 });
+
 
 app.put('/api/inventory/update-item', (req, res) => {
     if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -718,7 +676,6 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
 
 app.get('/api/inventory/audit-report', (req, res) => {
 
-    // Step 1: Get ALL completed sales (no date filter - full history)
     const salesSql = `
         SELECT si.product_name, SUM(si.qty) as total_qty
         FROM sales_items si
@@ -730,31 +687,8 @@ app.get('/api/inventory/audit-report', (req, res) => {
     db.query(salesSql, (salesErr, salesRows) => {
         if (salesErr) return res.status(500).json(salesErr);
 
-        // Step 2: Expand combos — same logic as Sales page
-        const portionsMap = {};
+        const portionsMap = buildPortionsMap(salesRows);
 
-        salesRows.forEach(row => {
-            const name = row.product_name.toLowerCase();
-            const qty  = Number(row.total_qty || 0);
-
-            if (name.includes("chapati beans")) {
-                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
-                portionsMap["Beans"]   = (portionsMap["Beans"]   || 0) + qty;
-            } else if (name.includes("chapati ndengu")) {
-                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
-                portionsMap["Ndengu"]  = (portionsMap["Ndengu"]  || 0) + qty;
-            } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
-                portionsMap["Rice"]   = (portionsMap["Rice"]   || 0) + qty;
-                portionsMap["Ndengu"] = (portionsMap["Ndengu"] || 0) + qty;
-            } else if (name.includes("smocha")) {
-                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty;
-                portionsMap["Smokies"] = (portionsMap["Smokies"] || 0) + qty;
-            } else {
-                portionsMap[row.product_name] = (portionsMap[row.product_name] || 0) + qty;
-            }
-        });
-
-        // Step 3: Get inventory + yield rules
         const inventorySql = `
             SELECT 
                 i.item_name,
@@ -770,7 +704,6 @@ app.get('/api/inventory/audit-report', (req, res) => {
         db.query(inventorySql, (invErr, invRows) => {
             if (invErr) return res.status(500).json(invErr);
 
-            // Step 4: Group by inventory item
             const groupedAudit = {};
 
             invRows.forEach(row => {
@@ -789,22 +722,17 @@ app.get('/api/inventory/audit-report', (req, res) => {
                     if (!groupedAudit[key].soldMap[menuKey]) {
                         groupedAudit[key].soldMap[menuKey] = {
                             name:  menuKey,
-                            qty:   0,
+                            qty:   portionsMap[menuKey] || 0,
                             yield: parseFloat(row.yield_per_unit) || 1
                         };
                     }
-                    // Use expanded portionsMap instead of raw sales
-                    groupedAudit[key].soldMap[menuKey].qty = portionsMap[menuKey] || 0;
                 }
             });
 
-            // Step 5: Build report
             const finalReport = Object.values(groupedAudit).map(mat => {
                 const soldItems = Object.values(mat.soldMap);
                 let totalUnitsUsed = 0;
-                soldItems.forEach(item => {
-                    totalUnitsUsed += item.qty / item.yield;
-                });
+                soldItems.forEach(item => { totalUnitsUsed += item.qty / item.yield; });
 
                 const exactRemaining    = mat.totalStartStore - totalUnitsUsed;
                 const wholeUnitsInStore = Math.floor(exactRemaining);
