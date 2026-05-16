@@ -438,46 +438,99 @@ app.get('/api/inventory', (req, res) => {
     startOfWeek.setHours(0, 0, 0, 0);
     const formattedStart = startOfWeek.toISOString().split('T')[0];
 
-    const sql = `
-        SELECT 
-            i.id,
-            i.item_name,
-            i.unit_measure,
-            i.opening_stock,
-            i.added_stock,
-            COALESCE(SUM(
-                CASE 
-                    WHEN y.yield_per_unit IS NOT NULL AND y.yield_per_unit > 0 
-                    THEN COALESCE(si.qty, 0) / y.yield_per_unit 
-                    ELSE 0 
-                END
-            ), 0) AS total_units_used
-        FROM inventory i
-        LEFT JOIN yield_rules y ON i.item_name = y.material_name
-        LEFT JOIN sales_items si ON y.menu_item_name = si.product_name
-        LEFT JOIN sales s ON si.sale_id = s.id
-                         AND s.payment_status = 'Completed'
-                         AND s.sale_date >= ?
-        GROUP BY i.id, i.item_name, i.unit_measure, i.opening_stock, i.added_stock
+    // Step 1: Get all completed sales items this week (same source as Sales page)
+    const salesSql = `
+        SELECT si.product_name, SUM(si.qty) as total_qty
+        FROM sales_items si
+        JOIN sales s ON si.sale_id = s.id
+        WHERE s.payment_status = 'Completed'
+        AND s.sale_date >= ?
+        GROUP BY si.product_name
     `;
 
-    db.query(sql, [formattedStart], (err, results) => {
-        if (err) return res.status(500).json(err);
+    db.query(salesSql, [formattedStart], (salesErr, salesRows) => {
+        if (salesErr) return res.status(500).json(salesErr);
 
-        const inventoryWithCalculations = results.map(item => {
-            const opening   = parseFloat(item.opening_stock)    || 0;
-            const added     = parseFloat(item.added_stock)      || 0;
-            const unitsUsed = parseFloat(item.total_units_used) || 0;
-            const closing   = opening + added - unitsUsed;
+        // Step 2: Expand combos exactly like the Sales page does
+        const portionsMap = {};
 
-            return {
-                ...item,
-                stock_quantity: parseFloat(closing.toFixed(2)),
-                units_sold:     parseFloat(unitsUsed.toFixed(2))
-            };
+        salesRows.forEach(row => {
+            const name = row.product_name.toLowerCase();
+            const qty  = Number(row.total_qty || 0);
+
+            if (name.includes("chapati beans")) {
+                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
+                portionsMap["Beans"]   = (portionsMap["Beans"]   || 0) + qty;
+            } else if (name.includes("chapati ndengu")) {
+                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
+                portionsMap["Ndengu"]  = (portionsMap["Ndengu"]  || 0) + qty;
+            } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
+                portionsMap["Rice"]   = (portionsMap["Rice"]   || 0) + qty;
+                portionsMap["Ndengu"] = (portionsMap["Ndengu"] || 0) + qty;
+            } else if (name.includes("smocha")) {
+                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty;
+                portionsMap["Smokies"] = (portionsMap["Smokies"] || 0) + qty;
+            } else {
+                portionsMap[row.product_name] = (portionsMap[row.product_name] || 0) + qty;
+            }
         });
 
-        res.json(inventoryWithCalculations);
+        // Step 3: Get inventory items with their yield rules
+        const inventorySql = `
+            SELECT 
+                i.id,
+                i.item_name,
+                i.unit_measure,
+                i.opening_stock,
+                i.added_stock,
+                y.menu_item_name,
+                y.yield_per_unit
+            FROM inventory i
+            LEFT JOIN yield_rules y ON i.item_name = y.material_name
+        `;
+
+        db.query(inventorySql, (invErr, invRows) => {
+            if (invErr) return res.status(500).json(invErr);
+
+            // Step 4: Group by inventory item and calculate usage
+            const inventoryMap = {};
+
+            invRows.forEach(row => {
+                const key = row.id;
+                if (!inventoryMap[key]) {
+                    inventoryMap[key] = {
+                        id:            row.id,
+                        item_name:     row.item_name,
+                        unit_measure:  row.unit_measure,
+                        opening_stock: row.opening_stock,
+                        added_stock:   row.added_stock,
+                        total_units_used: 0
+                    };
+                }
+
+                // If this inventory item has a yield rule, calculate usage
+                if (row.menu_item_name && row.yield_per_unit > 0) {
+                    const portionsSold = portionsMap[row.menu_item_name] || 0;
+                    inventoryMap[key].total_units_used += portionsSold / row.yield_per_unit;
+                }
+            });
+
+            // Step 5: Calculate closing stock
+            const result = Object.values(inventoryMap).map(item => {
+                const opening   = parseFloat(item.opening_stock)      || 0;
+                const added     = parseFloat(item.added_stock)        || 0;
+                const unitsUsed = parseFloat(item.total_units_used)   || 0;
+                const closing   = opening + added - unitsUsed;
+
+                return {
+                    ...item,
+                    stock_quantity: parseFloat(closing.toFixed(2)),
+                    units_sold:     parseFloat(unitsUsed.toFixed(2))
+                };
+            });
+
+            res.json(result);
+        });
     });
 });
 
@@ -490,43 +543,81 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
     startOfWeek.setHours(0, 0, 0, 0);
     const formattedStart = startOfWeek.toISOString().split('T')[0];
 
-    const sql = `
-        SELECT 
-            i.id,
-            i.opening_stock,
-            i.added_stock,
-            COALESCE(SUM(
-                CASE 
-                    WHEN y.yield_per_unit IS NOT NULL AND y.yield_per_unit > 0 
-                    THEN COALESCE(si.qty, 0) / y.yield_per_unit 
-                    ELSE 0 
-                END
-            ), 0) AS total_units_used
-        FROM inventory i
-        LEFT JOIN yield_rules y ON i.item_name = y.material_name
-        LEFT JOIN sales_items si ON y.menu_item_name = si.product_name
-        LEFT JOIN sales s ON si.sale_id = s.id
-                         AND s.payment_status = 'Completed'
-                         AND s.sale_date >= ?
-        GROUP BY i.id, i.opening_stock, i.added_stock
+    const salesSql = `
+        SELECT si.product_name, SUM(si.qty) as total_qty
+        FROM sales_items si
+        JOIN sales s ON si.sale_id = s.id
+        WHERE s.payment_status = 'Completed'
+        AND s.sale_date >= ?
+        GROUP BY si.product_name
     `;
 
-    db.query(sql, [formattedStart], (err, results) => {
-        if (err) return res.status(500).json(err);
+    db.query(salesSql, [formattedStart], (salesErr, salesRows) => {
+        if (salesErr) return res.status(500).json(salesErr);
 
-        results.forEach(item => {
-            const opening    = parseFloat(item.opening_stock)    || 0;
-            const added      = parseFloat(item.added_stock)      || 0;
-            const unitsUsed  = parseFloat(item.total_units_used) || 0;
-            const newOpening = parseFloat((opening + added - unitsUsed).toFixed(2));
+        const portionsMap = {};
+        salesRows.forEach(row => {
+            const name = row.product_name.toLowerCase();
+            const qty  = Number(row.total_qty || 0);
 
-            db.query(
-                "UPDATE inventory SET opening_stock = ?, added_stock = 0 WHERE id = ?",
-                [Math.max(0, newOpening), item.id]
-            );
+            if (name.includes("chapati beans")) {
+                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
+                portionsMap["Beans"]   = (portionsMap["Beans"]   || 0) + qty;
+            } else if (name.includes("chapati ndengu")) {
+                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
+                portionsMap["Ndengu"]  = (portionsMap["Ndengu"]  || 0) + qty;
+            } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
+                portionsMap["Rice"]   = (portionsMap["Rice"]   || 0) + qty;
+                portionsMap["Ndengu"] = (portionsMap["Ndengu"] || 0) + qty;
+            } else if (name.includes("smocha")) {
+                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty;
+                portionsMap["Smokies"] = (portionsMap["Smokies"] || 0) + qty;
+            } else {
+                portionsMap[row.product_name] = (portionsMap[row.product_name] || 0) + qty;
+            }
         });
 
-        res.json({ success: true, message: "Weekly stock rolled over successfully" });
+        const inventorySql = `
+            SELECT i.id, i.opening_stock, i.added_stock,
+                   y.menu_item_name, y.yield_per_unit
+            FROM inventory i
+            LEFT JOIN yield_rules y ON i.item_name = y.material_name
+        `;
+
+        db.query(inventorySql, (invErr, invRows) => {
+            if (invErr) return res.status(500).json(invErr);
+
+            const inventoryMap = {};
+            invRows.forEach(row => {
+                const key = row.id;
+                if (!inventoryMap[key]) {
+                    inventoryMap[key] = {
+                        id: row.id,
+                        opening_stock: row.opening_stock,
+                        added_stock:   row.added_stock,
+                        total_units_used: 0
+                    };
+                }
+                if (row.menu_item_name && row.yield_per_unit > 0) {
+                    const portionsSold = portionsMap[row.menu_item_name] || 0;
+                    inventoryMap[key].total_units_used += portionsSold / row.yield_per_unit;
+                }
+            });
+
+            Object.values(inventoryMap).forEach(item => {
+                const opening    = parseFloat(item.opening_stock)    || 0;
+                const added      = parseFloat(item.added_stock)      || 0;
+                const unitsUsed  = parseFloat(item.total_units_used) || 0;
+                const newOpening = parseFloat((opening + added - unitsUsed).toFixed(2));
+
+                db.query(
+                    "UPDATE inventory SET opening_stock = ?, added_stock = 0 WHERE id = ?",
+                    [Math.max(0, newOpening), item.id]
+                );
+            });
+
+            res.json({ success: true, message: "Weekly stock rolled over successfully" });
+        });
     });
 });
 
