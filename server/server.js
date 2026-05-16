@@ -513,6 +513,11 @@ app.get('/api/inventory', (req, res) => {
 
         const portionsMap = buildPortionsMap(salesRows);
 
+        const portionsMapLower = {};
+Object.keys(portionsMap).forEach(k => {
+    portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
+});
+
         db.query(
             `SELECT i.id, i.item_name, i.unit_measure, i.opening_stock, i.added_stock,
                     y.menu_item_name, y.yield_per_unit
@@ -641,7 +646,7 @@ Object.keys(portionsMap).forEach(k => {
                             inventoryMap[key] = { id: row.id, opening_stock: row.opening_stock, added_stock: row.added_stock, total_units_used: 0 };
                         }
                         if (row.menu_item_name && row.yield_per_unit > 0) {
-                            inventoryMap[key].total_units_used += (portionsMap[row.menu_item_name] || 0) / row.yield_per_unit;
+                            inventoryMap[key].total_units_used += (portionsMapLower[row.menu_item_name.toLowerCase().trim()] || 0) / row.yield_per_unit;
                         }
                     });
 
@@ -675,6 +680,12 @@ app.get('/api/inventory/audit-report', (req, res) => {
 
             const portionsMap = buildPortionsMap(salesRows);
 
+            const portionsMapLower = {};
+Object.keys(portionsMap).forEach(k => {
+    portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
+});
+
+
             db.query(
                 `SELECT i.item_name, i.unit_measure, i.opening_stock, i.added_stock,
                         y.menu_item_name, y.yield_per_unit
@@ -699,7 +710,7 @@ app.get('/api/inventory/audit-report', (req, res) => {
                             if (!groupedAudit[key].soldMap[menuKey]) {
                                 groupedAudit[key].soldMap[menuKey] = {
                                     name:  menuKey,
-                                    qty:   portionsMap[menuKey] || 0,
+                                    qty: portionsMapLower[menuKey.toLowerCase().trim()] || 0,
                                     yield: parseFloat(row.yield_per_unit) || 1
                                 };
                             }
