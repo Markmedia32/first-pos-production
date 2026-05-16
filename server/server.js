@@ -31,9 +31,8 @@ const buildPortionsMap = (salesRows) => {
             portionsMap["Ndengu"] = (portionsMap["Ndengu"] || 0) + qty;
 
         } else if (name === "smocha") {
-            // Smocha uses 1 Chapati + 1 Smokie
-            portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty;
-            portionsMap["Smokie"]  = (portionsMap["Smokie"]  || 0) + qty;
+    portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty;
+    portionsMap["Smokies"] = (portionsMap["Smokies"] || 0) + qty;
 
         } else {
             // Normal item — use product_name as-is
@@ -62,11 +61,11 @@ const splitComboItems = (items) => {
             expanded.push({ product_name: "Rice",   qty: item.qty, price: 0 });
             expanded.push({ product_name: "Ndengu", qty: item.qty, price: 0 });
         } else if (name === "smocha") {
-            expanded.push({ product_name: "Chapati", qty: item.qty, price: 0 });
-            expanded.push({ product_name: "Smokies", qty: item.qty, price: 0 });
-        } else {
-            expanded.push(item);
-        }
+    expanded.push({ product_name: "Chapati",  total_qty: qty, price: priceMap["chapati"]  || 0, total_revenue: (priceMap["chapati"]  || 0) * qty });
+    expanded.push({ product_name: "Smokies",  total_qty: qty, price: priceMap["smokies"]  || 0, total_revenue: (priceMap["smokies"]  || 0) * qty });
+} else {
+    expanded.push(item);
+}
     });
     return expanded;
 };
