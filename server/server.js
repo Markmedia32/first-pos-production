@@ -717,96 +717,139 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
 // ─────────────────────────────────────────
 
 app.get('/api/inventory/audit-report', (req, res) => {
-    const sql = `
-        SELECT 
-            i.item_name,
-            i.unit_measure,
-            i.opening_stock,
-            i.added_stock,
-            y.menu_item_name,
-            y.yield_per_unit,
-            (
-                SELECT COALESCE(SUM(si.qty), 0)
-                FROM sales_items si
-                JOIN sales s ON si.sale_id = s.id
-                WHERE si.product_name = y.menu_item_name
-                AND s.payment_status = 'Completed'
-            ) as total_sold
-        FROM inventory i
-        LEFT JOIN yield_rules y ON i.item_name = y.material_name
+
+    // Step 1: Get ALL completed sales (no date filter - full history)
+    const salesSql = `
+        SELECT si.product_name, SUM(si.qty) as total_qty
+        FROM sales_items si
+        JOIN sales s ON si.sale_id = s.id
+        WHERE s.payment_status = 'Completed'
+        GROUP BY si.product_name
     `;
 
-    db.query(sql, (err, results) => {
-        if (err) return res.status(500).json(err);
+    db.query(salesSql, (salesErr, salesRows) => {
+        if (salesErr) return res.status(500).json(salesErr);
 
-        const groupedAudit = {};
+        // Step 2: Expand combos — same logic as Sales page
+        const portionsMap = {};
 
-        results.forEach(row => {
-            const key = row.item_name;
-            if (!groupedAudit[key]) {
-                groupedAudit[key] = {
-                    name:           row.item_name,
-                    unit:           row.unit_measure,
-                    totalStartStore:(parseFloat(row.opening_stock) || 0) + (parseFloat(row.added_stock) || 0),
-                    soldMap:        {}
-                };
-            }
-            if (row.menu_item_name && parseFloat(row.total_sold) > 0) {
-                const menuKey = row.menu_item_name;
-                if (!groupedAudit[key].soldMap[menuKey]) {
-                    groupedAudit[key].soldMap[menuKey] = { name: menuKey, qty: 0, yield: parseFloat(row.yield_per_unit) || 1 };
-                }
-                groupedAudit[key].soldMap[menuKey].qty += parseFloat(row.total_sold) || 0;
-            }
-        });
+        salesRows.forEach(row => {
+            const name = row.product_name.toLowerCase();
+            const qty  = Number(row.total_qty || 0);
 
-        const finalReport = Object.values(groupedAudit).map(mat => {
-            const soldItems = Object.values(mat.soldMap);
-            let totalKgUsed = 0;
-            soldItems.forEach(item => { totalKgUsed += item.qty / item.yield; });
-
-            const exactRemaining  = mat.totalStartStore - totalKgUsed;
-            const wholeUnitsInStore = Math.floor(exactRemaining);
-            const unitDisplay = mat.unit || 'unit';
-
-            const totalPortionsSold = soldItems.reduce((acc, i) => acc + i.qty, 0);
-
-            let soldDetails = '';
-            if (soldItems.length === 1) {
-                soldDetails = `${soldItems[0].qty} portions of ${soldItems[0].name}`;
-            } else if (soldItems.length > 1) {
-                soldDetails = soldItems.map(si => `${si.qty} × ${si.name}`).join(', ') + ` (${totalPortionsSold} total)`;
-            }
-
-            const openUnitPortions     = soldItems[0]?.yield || 1;
-            const fractionalUsed       = totalKgUsed % 1;
-            const portionsLeftInOpen   = fractionalUsed > 0 ? Math.round((1 - fractionalUsed) * openUnitPortions) : 0;
-
-            let message = '';
-            if (soldItems.length > 0) {
-                if (wholeUnitsInStore < 0) {
-                    message = `Stock shortage! Sold: ${soldDetails}. Calculations show a deficit — please recount.`;
-                } else if (portionsLeftInOpen > 0) {
-                    message = `Sold: ${soldDetails}. ~${portionsLeftInOpen} portions remain in the open ${unitDisplay}. Store should have ${wholeUnitsInStore} full ${unitDisplay}.`;
-                } else {
-                    message = `Sold: ${soldDetails}. Store should have ${wholeUnitsInStore} full ${unitDisplay}.`;
-                }
+            if (name.includes("chapati beans")) {
+                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
+                portionsMap["Beans"]   = (portionsMap["Beans"]   || 0) + qty;
+            } else if (name.includes("chapati ndengu")) {
+                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty * 2;
+                portionsMap["Ndengu"]  = (portionsMap["Ndengu"]  || 0) + qty;
+            } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
+                portionsMap["Rice"]   = (portionsMap["Rice"]   || 0) + qty;
+                portionsMap["Ndengu"] = (portionsMap["Ndengu"] || 0) + qty;
+            } else if (name.includes("smocha")) {
+                portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty;
+                portionsMap["Smokies"] = (portionsMap["Smokies"] || 0) + qty;
             } else {
-                message = `No sales recorded. Store should have ${mat.totalStartStore} ${unitDisplay}.`;
+                portionsMap[row.product_name] = (portionsMap[row.product_name] || 0) + qty;
             }
-
-            return {
-                item:          mat.name,
-                unit:          unitDisplay,
-                totalSold:     totalPortionsSold,
-                soldBreakdown: soldItems,
-                shouldBe:      Math.max(0, wholeUnitsInStore),
-                hasShortage:   wholeUnitsInStore < 0,
-                message
-            };
         });
 
-        res.json(finalReport);
+        // Step 3: Get inventory + yield rules
+        const inventorySql = `
+            SELECT 
+                i.item_name,
+                i.unit_measure,
+                i.opening_stock,
+                i.added_stock,
+                y.menu_item_name,
+                y.yield_per_unit
+            FROM inventory i
+            LEFT JOIN yield_rules y ON i.item_name = y.material_name
+        `;
+
+        db.query(inventorySql, (invErr, invRows) => {
+            if (invErr) return res.status(500).json(invErr);
+
+            // Step 4: Group by inventory item
+            const groupedAudit = {};
+
+            invRows.forEach(row => {
+                const key = row.item_name;
+                if (!groupedAudit[key]) {
+                    groupedAudit[key] = {
+                        name:            row.item_name,
+                        unit:            row.unit_measure,
+                        totalStartStore: (parseFloat(row.opening_stock) || 0) + (parseFloat(row.added_stock) || 0),
+                        soldMap:         {}
+                    };
+                }
+
+                if (row.menu_item_name && row.yield_per_unit > 0) {
+                    const menuKey = row.menu_item_name;
+                    if (!groupedAudit[key].soldMap[menuKey]) {
+                        groupedAudit[key].soldMap[menuKey] = {
+                            name:  menuKey,
+                            qty:   0,
+                            yield: parseFloat(row.yield_per_unit) || 1
+                        };
+                    }
+                    // Use expanded portionsMap instead of raw sales
+                    groupedAudit[key].soldMap[menuKey].qty = portionsMap[menuKey] || 0;
+                }
+            });
+
+            // Step 5: Build report
+            const finalReport = Object.values(groupedAudit).map(mat => {
+                const soldItems = Object.values(mat.soldMap);
+                let totalUnitsUsed = 0;
+                soldItems.forEach(item => {
+                    totalUnitsUsed += item.qty / item.yield;
+                });
+
+                const exactRemaining    = mat.totalStartStore - totalUnitsUsed;
+                const wholeUnitsInStore = Math.floor(exactRemaining);
+                const unitDisplay       = mat.unit || 'unit';
+                const totalPortionsSold = soldItems.reduce((acc, i) => acc + i.qty, 0);
+
+                let soldDetails = '';
+                if (soldItems.length === 1) {
+                    soldDetails = `${soldItems[0].qty} portions of ${soldItems[0].name}`;
+                } else if (soldItems.length > 1) {
+                    soldDetails = soldItems.map(si => `${si.qty} × ${si.name}`).join(', ') + ` (${totalPortionsSold} total)`;
+                }
+
+                const openUnitPortions   = soldItems[0]?.yield || 1;
+                const fractionalUsed     = totalUnitsUsed % 1;
+                const portionsLeftInOpen = fractionalUsed > 0
+                    ? Math.round((1 - fractionalUsed) * openUnitPortions)
+                    : 0;
+
+                let message = '';
+                if (soldItems.length > 0 && totalPortionsSold > 0) {
+                    if (wholeUnitsInStore < 0) {
+                        message = `Stock shortage! Sold: ${soldDetails}. Calculations show a deficit — please recount.`;
+                    } else if (portionsLeftInOpen > 0) {
+                        message = `Sold: ${soldDetails}. ~${portionsLeftInOpen} portions remain in open ${unitDisplay}. Store should have ${wholeUnitsInStore} full ${unitDisplay}.`;
+                    } else {
+                        message = `Sold: ${soldDetails}. Store should have ${wholeUnitsInStore} full ${unitDisplay}.`;
+                    }
+                } else {
+                    message = `No sales recorded. Store should have ${mat.totalStartStore} ${unitDisplay}.`;
+                }
+
+                return {
+                    item:          mat.name,
+                    unit:          unitDisplay,
+                    totalSold:     totalPortionsSold,
+                    soldBreakdown: soldItems,
+                    shouldBe:      Math.max(0, wholeUnitsInStore),
+                    hasShortage:   wholeUnitsInStore < 0,
+                    message
+                };
+            });
+
+            res.json(finalReport);
+        });
     });
 });
 
