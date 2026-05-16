@@ -438,7 +438,6 @@ app.get('/api/inventory', (req, res) => {
     startOfWeek.setHours(0, 0, 0, 0);
     const formattedStart = startOfWeek.toISOString().split('T')[0];
 
-    // Sum portions sold this week per material, then convert to kg inside JS
     const sql = `
         SELECT 
             i.id,
@@ -446,48 +445,31 @@ app.get('/api/inventory', (req, res) => {
             i.unit_measure,
             i.opening_stock,
             i.added_stock,
-            y.yield_per_unit,
-            COALESCE(SUM(si.qty), 0) AS total_portions_sold
+            SUM(
+                COALESCE(si.qty, 0) / y.yield_per_unit
+            ) AS total_units_used
         FROM inventory i
-        LEFT JOIN yield_rules y      ON i.item_name = y.material_name
-        LEFT JOIN sales_items si     ON y.menu_item_name = si.product_name
-        LEFT JOIN sales s            ON si.sale_id = s.id
-                                    AND s.payment_status = 'Completed'
-                                    AND s.sale_date >= ?
-        GROUP BY i.id, i.item_name, i.unit_measure, i.opening_stock, i.added_stock, y.yield_per_unit
+        LEFT JOIN yield_rules y ON i.item_name = y.material_name
+        LEFT JOIN sales_items si ON y.menu_item_name = si.product_name
+        LEFT JOIN sales s ON si.sale_id = s.id
+                         AND s.payment_status = 'Completed'
+                         AND s.sale_date >= ?
+        GROUP BY i.id, i.item_name, i.unit_measure, i.opening_stock, i.added_stock
     `;
 
     db.query(sql, [formattedStart], (err, results) => {
         if (err) return res.status(500).json(err);
 
         const inventoryWithCalculations = results.map(item => {
-            const opening      = parseFloat(item.opening_stock)      || 0;
-            const added        = parseFloat(item.added_stock)        || 0;
-            const yieldPerUnit = parseFloat(item.yield_per_unit)     || 1;
-            const portions     = parseFloat(item.total_portions_sold)|| 0;
-
-            // KEY: portions → kg, then subtract from physical stock
-            const kgUsed    = portions / yieldPerUnit;
-            const closingKg = opening + added - kgUsed;
-
-            const weightMatch = item.unit_measure ? item.unit_measure.match(/(\d+)/) : null;
-            const unitWeight  = weightMatch ? parseInt(weightMatch[0]) : 1;
-
-            let displayStock, displayOpening;
-            if (item.item_name.toLowerCase().includes("potato")) {
-                displayStock   = `${Math.floor(closingKg)} (${item.unit_measure} each)`;
-                displayOpening = `${opening} (${item.unit_measure})`;
-            } else {
-                displayStock   = `${(closingKg * unitWeight).toFixed(2)} kg`;
-                displayOpening = `${(opening  * unitWeight).toFixed(2)} kg`;
-            }
+            const opening   = parseFloat(item.opening_stock) || 0;
+            const added     = parseFloat(item.added_stock)   || 0;
+            const unitsUsed = parseFloat(item.total_units_used) || 0;
+            const closing   = opening + added - unitsUsed;
 
             return {
                 ...item,
-                displayOpening,
-                displayStock,
-                stock_quantity: parseFloat(closingKg.toFixed(2)),
-                units_sold:     parseFloat(kgUsed.toFixed(2))
+                stock_quantity: parseFloat(closing.toFixed(2)),
+                units_sold:     parseFloat(unitsUsed.toFixed(2))
             };
         });
 
