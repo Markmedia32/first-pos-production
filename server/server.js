@@ -877,6 +877,28 @@ app.get('/api/reports/customer-orders/:id', (req, res) => {
     );
 });
 
+// ── TEMPORARY DEBUG — remove after fixing ──
+app.get('/api/debug/yield-check', (req, res) => {
+    db.query(
+        `SELECT DISTINCT si.product_name,
+                yr.menu_item_name,
+                yr.material_name,
+                yr.yield_per_unit
+         FROM sales_items si
+         LEFT JOIN yield_rules yr ON LOWER(TRIM(si.product_name)) = LOWER(TRIM(yr.menu_item_name))
+         ORDER BY si.product_name`,
+        (err, results) => {
+            if (err) return res.status(500).json(err);
+            const broken = results.filter(r => !r.menu_item_name);
+            const working = results.filter(r => r.menu_item_name);
+            res.json({
+                broken_no_rule_found: broken.map(r => r.product_name),
+                working_matched: working
+            });
+        }
+    );
+});
+
 app.get('/', (req, res) => { res.send("POS API running..."); });
 
 const PORT = process.env.PORT || 5000;
