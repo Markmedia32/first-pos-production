@@ -445,9 +445,13 @@ app.get('/api/inventory', (req, res) => {
             i.unit_measure,
             i.opening_stock,
             i.added_stock,
-            SUM(
-                COALESCE(si.qty, 0) / y.yield_per_unit
-            ) AS total_units_used
+            COALESCE(SUM(
+                CASE 
+                    WHEN y.yield_per_unit IS NOT NULL AND y.yield_per_unit > 0 
+                    THEN COALESCE(si.qty, 0) / y.yield_per_unit 
+                    ELSE 0 
+                END
+            ), 0) AS total_units_used
         FROM inventory i
         LEFT JOIN yield_rules y ON i.item_name = y.material_name
         LEFT JOIN sales_items si ON y.menu_item_name = si.product_name
@@ -461,8 +465,8 @@ app.get('/api/inventory', (req, res) => {
         if (err) return res.status(500).json(err);
 
         const inventoryWithCalculations = results.map(item => {
-            const opening   = parseFloat(item.opening_stock) || 0;
-            const added     = parseFloat(item.added_stock)   || 0;
+            const opening   = parseFloat(item.opening_stock)    || 0;
+            const added     = parseFloat(item.added_stock)      || 0;
             const unitsUsed = parseFloat(item.total_units_used) || 0;
             const closing   = opening + added - unitsUsed;
 
@@ -474,6 +478,55 @@ app.get('/api/inventory', (req, res) => {
         });
 
         res.json(inventoryWithCalculations);
+    });
+});
+
+app.post('/api/inventory/weekly-reset', (req, res) => {
+    if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ message: "Unauthorized" });
+
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const formattedStart = startOfWeek.toISOString().split('T')[0];
+
+    const sql = `
+        SELECT 
+            i.id,
+            i.opening_stock,
+            i.added_stock,
+            COALESCE(SUM(
+                CASE 
+                    WHEN y.yield_per_unit IS NOT NULL AND y.yield_per_unit > 0 
+                    THEN COALESCE(si.qty, 0) / y.yield_per_unit 
+                    ELSE 0 
+                END
+            ), 0) AS total_units_used
+        FROM inventory i
+        LEFT JOIN yield_rules y ON i.item_name = y.material_name
+        LEFT JOIN sales_items si ON y.menu_item_name = si.product_name
+        LEFT JOIN sales s ON si.sale_id = s.id
+                         AND s.payment_status = 'Completed'
+                         AND s.sale_date >= ?
+        GROUP BY i.id, i.opening_stock, i.added_stock
+    `;
+
+    db.query(sql, [formattedStart], (err, results) => {
+        if (err) return res.status(500).json(err);
+
+        results.forEach(item => {
+            const opening    = parseFloat(item.opening_stock)    || 0;
+            const added      = parseFloat(item.added_stock)      || 0;
+            const unitsUsed  = parseFloat(item.total_units_used) || 0;
+            const newOpening = parseFloat((opening + added - unitsUsed).toFixed(2));
+
+            db.query(
+                "UPDATE inventory SET opening_stock = ?, added_stock = 0 WHERE id = ?",
+                [Math.max(0, newOpening), item.id]
+            );
+        });
+
+        res.json({ success: true, message: "Weekly stock rolled over successfully" });
     });
 });
 
