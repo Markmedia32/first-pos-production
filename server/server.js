@@ -494,10 +494,14 @@ app.put('/api/receipts/:id/edit', (req, res) => {
 
 app.get('/api/inventory', (req, res) => {
     const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-    const formattedStart = startOfWeek.toISOString().split('T')[0];
+const startOfWeek = new Date(now);
+const day = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+// If today is Sunday (0), look back 6 days to last Monday
+// Otherwise look back to this week's Monday
+const daysToMonday = day === 0 ? 6 : day - 1;
+startOfWeek.setDate(now.getDate() - daysToMonday);
+startOfWeek.setHours(0, 0, 0, 0);
+const formattedStart = startOfWeek.toISOString().split('T')[0];
 
     const salesSql = `
         SELECT si.product_name, SUM(si.qty) as total_qty
