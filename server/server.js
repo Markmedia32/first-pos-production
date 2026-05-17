@@ -507,7 +507,7 @@ const formattedStart = startOfWeek.toISOString().split('T')[0];
         SELECT si.product_name, SUM(si.qty) as total_qty
         FROM sales_items si
         JOIN sales s ON si.sale_id = s.id
-        WHERE s.payment_status = 'Completed'
+        WHERE s.payment_status != 'Pending'
         AND s.sale_date >= ?
         GROUP BY si.product_name
     `;
@@ -622,7 +622,8 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
     db.query(
         `SELECT si.product_name, SUM(si.qty) as total_qty
          FROM sales_items si JOIN sales s ON si.sale_id = s.id
-         WHERE s.payment_status = 'Completed' AND s.sale_date >= ?
+         WHERE s.payment_status != 'Pending'
+         AND s.sale_date >= ?
          GROUP BY si.product_name`,
         [formattedStart],
         (salesErr, salesRows) => {
@@ -677,7 +678,7 @@ app.get('/api/inventory/audit-report', (req, res) => {
     db.query(
         `SELECT si.product_name, SUM(si.qty) as total_qty
          FROM sales_items si JOIN sales s ON si.sale_id = s.id
-         WHERE s.payment_status = 'Completed'
+         WHERE s.payment_status != 'Pending'
          GROUP BY si.product_name`,
         (salesErr, salesRows) => {
             if (salesErr) return res.status(500).json(salesErr);
