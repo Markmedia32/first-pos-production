@@ -493,79 +493,76 @@ app.put('/api/receipts/:id/edit', (req, res) => {
 // ─────────────────────────────────────────
 
 app.get('/api/inventory', (req, res) => {
-    const now = new Date();
-const startOfWeek = new Date(now);
-const day = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-// If today is Sunday (0), look back 6 days to last Monday
-// Otherwise look back to this week's Monday
-const daysToMonday = day === 0 ? 6 : day - 1;
-startOfWeek.setDate(now.getDate() - daysToMonday);
-startOfWeek.setHours(0, 0, 0, 0);
-const formattedStart = startOfWeek.toISOString().split('T')[0];
+    // Get the last reset date from settings — this is when the current week started
+    db.query('SELECT last_reset_date FROM inventory_settings WHERE id = 1', (settErr, settRows) => {
+        if (settErr) return res.status(500).json(settErr);
 
-    const salesSql = `
-        SELECT si.product_name, SUM(si.qty) as total_qty
-        FROM sales_items si
-        JOIN sales s ON si.sale_id = s.id
-        WHERE s.payment_status != 'Pending'
-        AND s.sale_date >= ?
-        GROUP BY si.product_name
-    `;
+        const lastReset = settRows.length > 0 
+            ? settRows[0].last_reset_date 
+            : '2026-01-01 00:00:00';
 
-    db.query(salesSql, [formattedStart], (salesErr, salesRows) => {
-        if (salesErr) return res.status(500).json(salesErr);
+        const salesSql = `
+            SELECT si.product_name, SUM(si.qty) as total_qty
+            FROM sales_items si
+            JOIN sales s ON si.sale_id = s.id
+            WHERE s.payment_status != 'Pending'
+            AND s.sale_date >= ?
+            GROUP BY si.product_name
+        `;
 
-        const portionsMap = buildPortionsMap(salesRows);
+        db.query(salesSql, [lastReset], (salesErr, salesRows) => {
+            if (salesErr) return res.status(500).json(salesErr);
 
-        const portionsMapLower = {};
-Object.keys(portionsMap).forEach(k => {
-    portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
-});
+            const portionsMap = buildPortionsMap(salesRows);
+            const portionsMapLower = {};
+            Object.keys(portionsMap).forEach(k => {
+                portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
+            });
 
-        db.query(
-            `SELECT i.id, i.item_name, i.unit_measure, i.opening_stock, i.added_stock,
-                    y.menu_item_name, y.yield_per_unit
-             FROM inventory i
-             LEFT JOIN yield_rules y ON i.item_name = y.material_name`,
-            (invErr, invRows) => {
-                if (invErr) return res.status(500).json(invErr);
+            db.query(
+                `SELECT i.id, i.item_name, i.unit_measure, i.opening_stock, i.added_stock,
+                        y.menu_item_name, y.yield_per_unit
+                 FROM inventory i
+                 LEFT JOIN yield_rules y ON i.item_name = y.material_name`,
+                (invErr, invRows) => {
+                    if (invErr) return res.status(500).json(invErr);
 
-                const inventoryMap = {};
-                invRows.forEach(row => {
-                    const key = row.id;
-                    if (!inventoryMap[key]) {
-                        inventoryMap[key] = {
-                            id:               row.id,
-                            item_name:        row.item_name,
-                            unit_measure:     row.unit_measure,
-                            opening_stock:    row.opening_stock,
-                            added_stock:      row.added_stock,
-                            total_units_used: 0
+                    const inventoryMap = {};
+                    invRows.forEach(row => {
+                        const key = row.id;
+                        if (!inventoryMap[key]) {
+                            inventoryMap[key] = {
+                                id:               row.id,
+                                item_name:        row.item_name,
+                                unit_measure:     row.unit_measure,
+                                opening_stock:    row.opening_stock,
+                                added_stock:      row.added_stock,
+                                total_units_used: 0
+                            };
+                        }
+                        if (row.menu_item_name && row.yield_per_unit > 0) {
+                            const ruleKey = row.menu_item_name.toLowerCase().trim();
+                            const portionsSold = portionsMapLower[ruleKey] || 0;
+                            inventoryMap[key].total_units_used += portionsSold / row.yield_per_unit;
+                        }
+                    });
+
+                    const result = Object.values(inventoryMap).map(item => {
+                        const opening   = parseFloat(item.opening_stock)    || 0;
+                        const added     = parseFloat(item.added_stock)      || 0;
+                        const unitsUsed = parseFloat(item.total_units_used) || 0;
+                        const closing   = opening + added - unitsUsed;
+                        return {
+                            ...item,
+                            stock_quantity: parseFloat(closing.toFixed(2)),
+                            units_sold:     parseFloat(unitsUsed.toFixed(2))
                         };
-                    }
-                    if (row.menu_item_name && row.yield_per_unit > 0) {
-    // Case-insensitive lookup — finds "Big soda" even if rule says "Big Soda"
-    const ruleKey = row.menu_item_name.toLowerCase().trim();
-    const portionsSold = portionsMapLower[ruleKey] || 0;
-    inventoryMap[key].total_units_used += portionsSold / row.yield_per_unit;
-}
-                });
+                    });
 
-                const result = Object.values(inventoryMap).map(item => {
-                    const opening   = parseFloat(item.opening_stock)    || 0;
-                    const added     = parseFloat(item.added_stock)      || 0;
-                    const unitsUsed = parseFloat(item.total_units_used) || 0;
-                    const closing   = opening + added - unitsUsed;
-                    return {
-                        ...item,
-                        stock_quantity: parseFloat(closing.toFixed(2)),
-                        units_sold:     parseFloat(unitsUsed.toFixed(2))
-                    };
-                });
-
-                res.json(result);
-            }
-        );
+                    res.json(result);
+                }
+            );
+        });
     });
 });
 
@@ -614,60 +611,79 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
     if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ message: "Unauthorized" });
 
     const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-    const formattedStart = startOfWeek.toISOString().split('T')[0];
+    const resetTime = now.toISOString().slice(0, 19).replace('T', ' ');
 
-    db.query(
-        `SELECT si.product_name, SUM(si.qty) as total_qty
-         FROM sales_items si JOIN sales s ON si.sale_id = s.id
-         WHERE s.payment_status != 'Pending'
-         AND s.sale_date >= ?
-         GROUP BY si.product_name`,
-        [formattedStart],
-        (salesErr, salesRows) => {
-            if (salesErr) return res.status(500).json(salesErr);
+    db.query('SELECT last_reset_date FROM inventory_settings WHERE id = 1', (settErr, settRows) => {
+        if (settErr) return res.status(500).json(settErr);
 
-            const portionsMap = buildPortionsMap(salesRows);
+        const lastReset = settRows.length > 0 
+            ? settRows[0].last_reset_date 
+            : '2026-01-01 00:00:00';
 
-            // Build a lowercase version for case-insensitive matching
-const portionsMapLower = {};
-Object.keys(portionsMap).forEach(k => {
-    portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
-});
+        db.query(
+            `SELECT si.product_name, SUM(si.qty) as total_qty
+             FROM sales_items si JOIN sales s ON si.sale_id = s.id
+             WHERE s.payment_status != 'Pending' AND s.sale_date >= ?
+             GROUP BY si.product_name`,
+            [lastReset],
+            (salesErr, salesRows) => {
+                if (salesErr) return res.status(500).json(salesErr);
 
-            db.query(
-                `SELECT i.id, i.opening_stock, i.added_stock, y.menu_item_name, y.yield_per_unit
-                 FROM inventory i
-                 LEFT JOIN yield_rules y ON i.item_name = y.material_name`,
-                (invErr, invRows) => {
-                    if (invErr) return res.status(500).json(invErr);
+                const portionsMap = buildPortionsMap(salesRows);
+                const portionsMapLower = {};
+                Object.keys(portionsMap).forEach(k => {
+                    portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
+                });
 
-                    const inventoryMap = {};
-                    invRows.forEach(row => {
-                        const key = row.id;
-                        if (!inventoryMap[key]) {
-                            inventoryMap[key] = { id: row.id, opening_stock: row.opening_stock, added_stock: row.added_stock, total_units_used: 0 };
-                        }
-                        if (row.menu_item_name && row.yield_per_unit > 0) {
-                            inventoryMap[key].total_units_used += (portionsMapLower[row.menu_item_name.toLowerCase().trim()] || 0) / row.yield_per_unit;
-                        }
-                    });
+                db.query(
+                    `SELECT i.id, i.opening_stock, i.added_stock, y.menu_item_name, y.yield_per_unit
+                     FROM inventory i
+                     LEFT JOIN yield_rules y ON i.item_name = y.material_name`,
+                    (invErr, invRows) => {
+                        if (invErr) return res.status(500).json(invErr);
 
-                    Object.values(inventoryMap).forEach(item => {
-                        const opening    = parseFloat(item.opening_stock)    || 0;
-                        const added      = parseFloat(item.added_stock)      || 0;
-                        const unitsUsed  = parseFloat(item.total_units_used) || 0;
-                        const newOpening = parseFloat((opening + added - unitsUsed).toFixed(2));
-                        db.query("UPDATE inventory SET opening_stock = ?, added_stock = 0 WHERE id = ?", [Math.max(0, newOpening), item.id]);
-                    });
+                        const inventoryMap = {};
+                        invRows.forEach(row => {
+                            const key = row.id;
+                            if (!inventoryMap[key]) {
+                                inventoryMap[key] = { id: row.id, opening_stock: row.opening_stock, added_stock: row.added_stock, total_units_used: 0 };
+                            }
+                            if (row.menu_item_name && row.yield_per_unit > 0) {
+                                inventoryMap[key].total_units_used += (portionsMapLower[row.menu_item_name.toLowerCase().trim()] || 0) / row.yield_per_unit;
+                            }
+                        });
 
-                    res.json({ success: true, message: "Weekly stock rolled over successfully" });
-                }
-            );
-        }
-    );
+                        // Roll closing stock into new opening stock for each item
+                        const updatePromises = Object.values(inventoryMap).map(item => {
+                            return new Promise((resolve) => {
+                                const opening    = parseFloat(item.opening_stock)    || 0;
+                                const added      = parseFloat(item.added_stock)      || 0;
+                                const unitsUsed  = parseFloat(item.total_units_used) || 0;
+                                const newOpening = parseFloat((opening + added - unitsUsed).toFixed(2));
+                                db.query(
+                                    "UPDATE inventory SET opening_stock = ?, added_stock = 0 WHERE id = ?",
+                                    [Math.max(0, newOpening), item.id],
+                                    resolve
+                                );
+                            });
+                        });
+
+                        Promise.all(updatePromises).then(() => {
+                            // Save the reset timestamp so inventory knows where the new week starts
+                            db.query(
+                                "UPDATE inventory_settings SET last_reset_date = ? WHERE id = 1",
+                                [resetTime],
+                                (updErr) => {
+                                    if (updErr) return res.status(500).json(updErr);
+                                    res.json({ success: true, message: "Weekly reset done. New week starts from " + resetTime });
+                                }
+                            );
+                        });
+                    }
+                );
+            }
+        );
+    });
 });
 
 // ─────────────────────────────────────────
