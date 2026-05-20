@@ -119,195 +119,98 @@ const [rangeData, setRangeData] = useState(null);
     setExpenses(expenses.filter(exp => exp.id !== id));
   };
 
-  const fetchDateRangeReport = async () => {
+ const fetchDateRangeReport = async () => {
   if (!fromDate || !toDate) return alert("Select both dates");
+
+  // ✅ Clear previous data first so UI resets between runs
+  setRangeData(null);
 
   try {
     const res = await axios.get(
-  `${API}/api/reports/date-range?from=${fromDate}&to=${toDate}`
-);
+      `${API}/api/reports/date-range?from=${fromDate}&to=${toDate}`
+    );
 
-console.log("REPORT DATA:", res.data);
-
+    console.log("REPORT DATA:", res.data);
     const data = res.data;
+
     if (!data || !data.payments) {
-  alert("No report data returned");
-  return;
-}
+      alert("No report data returned");
+      return;
+    }
+
+    // ✅ Set state first, then print separately
     setRangeData(data);
 
-    try {
-  const printWindow = window.open('', '_blank');
+    // ✅ Small delay so React re-renders before print window opens
+    setTimeout(() => {
+      const printWindow = window.open('', '_blank');
 
-  if (!printWindow) {
-    alert("Popup blocked! Please allow popups for this site.");
-    return;
-  }
+      if (!printWindow) {
+        alert("Popup blocked! Please allow popups for this site.");
+        return;
+      }
 
-  printWindow.document.write(`
-      <html>
-        <head>
-          <title>Financial Report</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              padding: 30px;
-              background: white;
-              color: #111;
-            }
-
-            .header {
-              text-align: center;
-              border-bottom: 2px solid #000;
-              padding-bottom: 10px;
-              margin-bottom: 20px;
-            }
-
-            .header h1 {
-              margin: 0;
-              font-size: 22px;
-              letter-spacing: 1px;
-            }
-
-            .header p {
-              margin: 5px 0;
-              font-size: 13px;
-              color: #555;
-            }
-
-            .summary {
-              display: grid;
-              grid-template-columns: repeat(4, 1fr);
-              gap: 10px;
-              margin: 20px 0;
-              text-align: center;
-            }
-
-            .card {
-              border: 1px solid #ddd;
-              padding: 10px;
-              border-radius: 8px;
-            }
-
-            .card h3 {
-              margin: 0;
-              font-size: 14px;
-              color: #666;
-            }
-
-            .card p {
-              margin: 5px 0 0;
-              font-size: 16px;
-              font-weight: bold;
-            }
-
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 20px;
-            }
-
-            th, td {
-              border: 1px solid #ddd;
-              padding: 8px;
-              font-size: 12px;
-            }
-
-            th {
-              background: #f5f5f5;
-            }
-
-            .total {
-              margin-top: 20px;
-              text-align: right;
-              font-size: 16px;
-              font-weight: bold;
-            }
-
-            .footer {
-              margin-top: 40px;
-              text-align: center;
-              font-size: 11px;
-              color: #777;
-            }
-          </style>
-        </head>
-
-        <body>
-
-          <div class="header">
-            <h1>FIRST CLASS WORLD LOGISTICS</h1>
-            <p>Financial Report</p>
-            <p>From: ${fromDate} To: ${toDate}</p>
-          </div>
-
-          <div class="summary">
-            <div class="card">
-              <h3>Cash</h3>
-              <p>Ksh ${(data.payments?.Cash || 0).toLocaleString()}</p>
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Financial Report</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 30px; background: white; color: #111; }
+              .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+              .header h1 { margin: 0; font-size: 22px; letter-spacing: 1px; }
+              .header p { margin: 5px 0; font-size: 13px; color: #555; }
+              .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 20px 0; text-align: center; }
+              .card { border: 1px solid #ddd; padding: 10px; border-radius: 8px; }
+              .card h3 { margin: 0; font-size: 14px; color: #666; }
+              .card p { margin: 5px 0 0; font-size: 16px; font-weight: bold; }
+              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+              th, td { border: 1px solid #ddd; padding: 8px; font-size: 12px; }
+              th { background: #f5f5f5; }
+              .total { margin-top: 20px; text-align: right; font-size: 16px; font-weight: bold; }
+              .footer { margin-top: 40px; text-align: center; font-size: 11px; color: #777; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>FIRST CLASS WORLD LOGISTICS</h1>
+              <p>Financial Report</p>
+              <p>From: ${fromDate} &nbsp;→&nbsp; To: ${toDate}</p>
             </div>
-
-            <div class="card">
-              <h3>M-Pesa</h3>
-              <p>Ksh ${(data.payments?.MPesa || 0).toLocaleString()}</p>
+            <div class="summary">
+              <div class="card"><h3>Cash</h3><p>Ksh ${(data.payments?.Cash || 0).toLocaleString()}</p></div>
+              <div class="card"><h3>M-Pesa</h3><p>Ksh ${(data.payments?.MPesa || 0).toLocaleString()}</p></div>
+              <div class="card"><h3>Wallet</h3><p>Ksh ${(data.payments?.Wallet || 0).toLocaleString()}</p></div>
+              <div class="card"><h3>Complimentary</h3><p>Ksh ${(data.payments?.Complimentary || 0).toLocaleString()}</p></div>
             </div>
-
-            <div class="card">
-              <h3>Wallet</h3>
-              <p>Ksh ${(data.payments?.Wallet || 0).toLocaleString()}</p>
-            </div>
-
-            <div class="card">
-              <h3>Complimentary</h3>
-              <p>Ksh ${(data.payments?.Complimentary || 0).toLocaleString()}</p>
-            </div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Product</th>
-                <th>Qty</th>
-                <th>Price</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${data.itemized.map(item => `
+            <table>
+              <thead>
                 <tr>
-                  <td>${item.product_name}</td>
-                  <td>${item.total_qty}</td>
-                  <td>${item.price}</td>
-                  <td>${item.total_revenue}</td>
+                  <th>Product</th><th>Qty</th><th>Price</th><th>Total</th>
                 </tr>
-              `).join('')}
-            </tbody>
-          </table>
-
-          <div class="total">
-            Total Revenue: Ksh ${(data.totalRevenue || 0).toLocaleString()}
-          </div>
-
-          <div class="footer">
-            Generated by First Class POS System • CODEY CRAFT AFRICA
-          </div>
-
-          <script>
-            window.print();
-          </script>
-
-        </body>
-      </html>
-    `);
-
-    printWindow.document.close();
-
-} catch (err) {
-  console.error("PRINT ERROR:", err);
-}
+              </thead>
+              <tbody>
+                ${(data.itemized || []).map(item => `
+                  <tr>
+                    <td>${item.product_name}</td>
+                    <td>${item.total_qty}</td>
+                    <td>Ksh ${parseFloat(item.price || 0).toLocaleString()}</td>
+                    <td>Ksh ${parseFloat(item.total_revenue || 0).toLocaleString()}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            <div class="total">Total Revenue: Ksh ${(data.totalRevenue || 0).toLocaleString()}</div>
+            <div class="footer">Generated by First Class POS System • CODEY CRAFT AFRICA</div>
+            <script>window.print();</script>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+    }, 100);
 
   } catch (err) {
     console.error("Date Range Error:", err);
+    alert("Failed to fetch report. Check the console for details.");
   }
 };
 
