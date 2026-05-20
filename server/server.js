@@ -508,11 +508,26 @@ app.put('/api/receipts/:id/edit', (req, res) => {
 app.get('/api/inventory', (req, res) => {
     db.query('SELECT last_reset_date FROM inventory_settings WHERE id = 1', (settErr, settRows) => {
         if (settErr) return res.status(500).json(settErr);
-
-        const lastReset = settRows.length > 0
-            ? settRows[0].last_reset_date
-            : '2026-01-01 00:00:00';
-
+ 
+        let lastReset = '2026-01-01 00:00:00';
+ 
+        if (settRows.length > 0 && settRows[0].last_reset_date) {
+            const candidateDate = new Date(settRows[0].last_reset_date);
+            const now = new Date();
+ 
+            // GUARD: if last_reset_date is in the future, use a safe fallback.
+            // This was the likely cause of all zeros — a reset accidentally wrote
+            // a future timestamp.
+            if (candidateDate > now) {
+                console.warn(`⚠️  inventory_settings.last_reset_date is in the FUTURE: ${settRows[0].last_reset_date}. Falling back to 2026-01-01.`);
+                lastReset = '2026-01-01 00:00:00';
+            } else {
+                lastReset = settRows[0].last_reset_date;
+            }
+        }
+ 
+        console.log(`[Inventory] Counting sales since: ${lastReset}`);
+ 
         const salesSql = `
             SELECT si.product_name, SUM(si.qty) as total_qty
             FROM sales_items si
@@ -521,16 +536,20 @@ app.get('/api/inventory', (req, res) => {
             AND s.sale_date >= ?
             GROUP BY si.product_name
         `;
-
+ 
         db.query(salesSql, [lastReset], (salesErr, salesRows) => {
             if (salesErr) return res.status(500).json(salesErr);
-
+ 
+            console.log(`[Inventory] Sales rows found: ${salesRows.length}`);
+ 
             const portionsMap = buildPortionsMap(salesRows);
             const portionsMapLower = {};
             Object.keys(portionsMap).forEach(k => {
                 portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
             });
-
+ 
+            console.log(`[Inventory] portionsMapLower keys:`, Object.keys(portionsMapLower));
+ 
             db.query(
                 `SELECT i.id, i.item_name, i.unit_measure, i.opening_stock, i.added_stock,
                         y.menu_item_name, y.yield_per_unit
@@ -538,7 +557,7 @@ app.get('/api/inventory', (req, res) => {
                  LEFT JOIN yield_rules y ON i.item_name = y.material_name`,
                 (invErr, invRows) => {
                     if (invErr) return res.status(500).json(invErr);
-
+ 
                     const inventoryMap = {};
                     invRows.forEach(row => {
                         const key = row.id;
@@ -558,7 +577,7 @@ app.get('/api/inventory', (req, res) => {
                             inventoryMap[key].total_units_used += portionsSold / row.yield_per_unit;
                         }
                     });
-
+ 
                     const result = Object.values(inventoryMap).map(item => {
                         const opening   = parseFloat(item.opening_stock)    || 0;
                         const added     = parseFloat(item.added_stock)      || 0;
@@ -570,13 +589,102 @@ app.get('/api/inventory', (req, res) => {
                             units_sold:     parseFloat(unitsUsed.toFixed(2))
                         };
                     });
-
+ 
                     res.json(result);
                 }
             );
         });
     });
 });
+ 
+ 
+// ─────────────────────────────────────────────────────────────────────────────
+// DIAGNOSTIC ENDPOINT — hit this in your browser to see exactly what's broken
+// GET /api/inventory/debug-check
+// ─────────────────────────────────────────────────────────────────────────────
+ 
+app.get('/api/inventory/debug-check', (req, res) => {
+    const report = {};
+ 
+    // Step 1: Check inventory_settings
+    db.query('SELECT * FROM inventory_settings', (e1, r1) => {
+        report.inventory_settings = r1 || [];
+ 
+        const lastReset = r1?.[0]?.last_reset_date || '2026-01-01 00:00:00';
+        const now = new Date();
+        const resetDate = new Date(lastReset);
+        report.last_reset_date = lastReset;
+        report.last_reset_is_future = resetDate > now;
+        report.current_server_time = now.toISOString();
+ 
+        // Step 2: Count sales after that date
+        db.query(
+            `SELECT COUNT(*) as sale_count, MIN(s.sale_date) as earliest, MAX(s.sale_date) as latest
+             FROM sales s
+             WHERE s.payment_status != 'Pending' AND s.sale_date >= ?`,
+            [lastReset],
+            (e2, r2) => {
+                report.sales_since_reset = r2?.[0] || {};
+ 
+                // Step 3: All distinct product names in sales_items (recent)
+                db.query(
+                    `SELECT DISTINCT si.product_name
+                     FROM sales_items si
+                     JOIN sales s ON si.sale_id = s.id
+                     WHERE s.payment_status != 'Pending' AND s.sale_date >= ?
+                     ORDER BY si.product_name`,
+                    [lastReset],
+                    (e3, r3) => {
+                        report.product_names_in_sales = (r3 || []).map(r => r.product_name);
+ 
+                        // Step 4: yield_rules — show what's mapped and what's not
+                        db.query(
+                            `SELECT DISTINCT si.product_name,
+                                    yr.menu_item_name AS yr_menu_item,
+                                    yr.material_name  AS yr_material,
+                                    yr.yield_per_unit
+                             FROM sales_items si
+                             JOIN sales s ON si.sale_id = s.id
+                             LEFT JOIN yield_rules yr
+                               ON LOWER(TRIM(si.product_name)) = LOWER(TRIM(yr.menu_item_name))
+                             WHERE s.payment_status != 'Pending' AND s.sale_date >= ?
+                             ORDER BY si.product_name`,
+                            [lastReset],
+                            (e4, r4) => {
+                                report.yield_rule_matches   = (r4 || []).filter(r => r.yr_menu_item);
+                                report.yield_rule_no_match  = (r4 || []).filter(r => !r.yr_menu_item).map(r => r.product_name);
+ 
+                                // Step 5: inventory JOIN yield_rules — check for broken joins
+                                db.query(
+                                    `SELECT i.item_name, i.unit_measure, i.opening_stock, i.added_stock,
+                                            y.menu_item_name, y.yield_per_unit
+                                     FROM inventory i
+                                     LEFT JOIN yield_rules y ON i.item_name = y.material_name
+                                     ORDER BY i.item_name`,
+                                    (e5, r5) => {
+                                        report.inventory_yield_join = (r5 || []).map(r => ({
+                                            item:           r.item_name,
+                                            opening:        r.opening_stock,
+                                            added:          r.added_stock,
+                                            rule_menu_item: r.menu_item_name || '⚠️ NO RULE',
+                                            yield_per_unit: r.yield_per_unit || null,
+                                        }));
+                                        report.inventory_items_without_rules = report.inventory_yield_join
+                                            .filter(r => r.rule_menu_item === '⚠️ NO RULE')
+                                            .map(r => r.item);
+ 
+                                        res.json(report);
+                                    }
+                                );
+                            }
+                        );
+                    }
+                );
+            }
+        );
+    });
+});
+
 
 app.put('/api/inventory/update-item', (req, res) => {
     if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ success: false, message: "Unauthorized" });
