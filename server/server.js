@@ -30,9 +30,14 @@ const buildPortionsMap = (salesRows) => {
             portionsMap["Rice"]   = (portionsMap["Rice"]   || 0) + qty;
             portionsMap["Ndengu"] = (portionsMap["Ndengu"] || 0) + qty;
 
+        } else if (name === "rice beans") {
+            // Rice Beans combo — deducts Rice stock AND Beans stock at 1:1
+            portionsMap["Rice"]  = (portionsMap["Rice"]  || 0) + qty;
+            portionsMap["Beans"] = (portionsMap["Beans"] || 0) + qty;
+
         } else if (name === "smocha") {
-    portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty;
-    portionsMap["Smokies"] = (portionsMap["Smokies"] || 0) + qty;
+            portionsMap["Chapati"] = (portionsMap["Chapati"] || 0) + qty;
+            portionsMap["Smokies"] = (portionsMap["Smokies"] || 0) + qty;
 
         } else {
             // Normal item — use product_name as-is
@@ -60,12 +65,16 @@ const splitComboItems = (items) => {
         } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
             expanded.push({ product_name: "Rice",   qty: item.qty, price: 0 });
             expanded.push({ product_name: "Ndengu", qty: item.qty, price: 0 });
+        } else if (name === "rice beans") {
+            // Split into Rice + Beans at 1:1
+            expanded.push({ product_name: "Rice",  qty: item.qty, price: 0 });
+            expanded.push({ product_name: "Beans", qty: item.qty, price: 0 });
         } else if (name === "smocha") {
-    expanded.push({ product_name: "Chapati", qty: item.qty, price: 0 });
-    expanded.push({ product_name: "Smokies", qty: item.qty, price: 0 });
-} else {
-    expanded.push(item);
-}
+            expanded.push({ product_name: "Chapati", qty: item.qty, price: 0 });
+            expanded.push({ product_name: "Smokies", qty: item.qty, price: 0 });
+        } else {
+            expanded.push(item);
+        }
     });
     return expanded;
 };
@@ -91,6 +100,10 @@ const expandComboForReports = async (items) => {
                 } else if (name.includes("ndengu rice") || name.includes("rice ndengu")) {
                     expanded.push({ product_name: "Rice",   total_qty: qty, price: priceMap["rice"]   || 0, total_revenue: (priceMap["rice"]   || 0) * qty });
                     expanded.push({ product_name: "Ndengu", total_qty: qty, price: priceMap["ndengu"] || 0, total_revenue: (priceMap["ndengu"] || 0) * qty });
+                } else if (name === "rice beans") {
+                    // Rice Beans combo — show as two separate line items in reports
+                    expanded.push({ product_name: "Rice",  total_qty: qty, price: priceMap["rice"]  || 0, total_revenue: (priceMap["rice"]  || 0) * qty });
+                    expanded.push({ product_name: "Beans", total_qty: qty, price: priceMap["beans"] || 0, total_revenue: (priceMap["beans"] || 0) * qty });
                 } else if (name === "smocha") {
                     expanded.push({ product_name: "Chapati", total_qty: qty, price: priceMap["chapati"] || 0, total_revenue: (priceMap["chapati"] || 0) * qty });
                     expanded.push({ product_name: "Smokies", total_qty: qty, price: priceMap["smokies"] || 0, total_revenue: (priceMap["smokies"] || 0) * qty });
@@ -493,12 +506,11 @@ app.put('/api/receipts/:id/edit', (req, res) => {
 // ─────────────────────────────────────────
 
 app.get('/api/inventory', (req, res) => {
-    // Get the last reset date from settings — this is when the current week started
     db.query('SELECT last_reset_date FROM inventory_settings WHERE id = 1', (settErr, settRows) => {
         if (settErr) return res.status(500).json(settErr);
 
-        const lastReset = settRows.length > 0 
-            ? settRows[0].last_reset_date 
+        const lastReset = settRows.length > 0
+            ? settRows[0].last_reset_date
             : '2026-01-01 00:00:00';
 
         const salesSql = `
@@ -579,14 +591,51 @@ app.put('/api/inventory/update-item', (req, res) => {
     );
 });
 
+// ─── RESTOCK: add stock + write to log ───────────────────────────────────────
 app.post('/api/inventory/add-stock', (req, res) => {
-    const { item_id, quantity_to_add } = req.body;
+    const { item_id, quantity_to_add, note, added_by } = req.body;
+    const qty = parseFloat(quantity_to_add);
+    if (!qty || qty <= 0) return res.status(400).json({ success: false, error: "Invalid quantity" });
+
+    // 1. Increment added_stock on the inventory row
     db.query(
         "UPDATE inventory SET added_stock = added_stock + ? WHERE id = ?",
-        [quantity_to_add, item_id],
+        [qty, item_id],
         (err) => {
-            if (err) return res.status(500).json(err);
-            res.json({ success: true });
+            if (err) return res.status(500).json({ success: false, error: err.message });
+
+            // 2. Look up item name for the log entry
+            db.query("SELECT item_name FROM inventory WHERE id = ?", [item_id], (err2, rows) => {
+                if (err2 || !rows.length) return res.json({ success: true }); // non-fatal
+                const itemName = rows[0].item_name;
+
+                // 3. Write to restock log
+                db.query(
+                    `INSERT INTO inventory_restock_log (inventory_id, item_name, quantity, note, added_by)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [item_id, itemName, qty, note || null, added_by || null],
+                    (err3) => {
+                        if (err3) console.error("Restock log error:", err3.message);
+                        res.json({ success: true });
+                    }
+                );
+            });
+        }
+    );
+});
+
+// ─── GET restock history for one inventory item ───────────────────────────────
+app.get('/api/inventory/:id/restock-history', (req, res) => {
+    db.query(
+        `SELECT id, quantity, note, added_by, created_at
+         FROM inventory_restock_log
+         WHERE inventory_id = ?
+         ORDER BY created_at DESC
+         LIMIT 50`,
+        [req.params.id],
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json(rows || []);
         }
     );
 });
@@ -616,8 +665,8 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
     db.query('SELECT last_reset_date FROM inventory_settings WHERE id = 1', (settErr, settRows) => {
         if (settErr) return res.status(500).json(settErr);
 
-        const lastReset = settRows.length > 0 
-            ? settRows[0].last_reset_date 
+        const lastReset = settRows.length > 0
+            ? settRows[0].last_reset_date
             : '2026-01-01 00:00:00';
 
         db.query(
@@ -653,7 +702,6 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
                             }
                         });
 
-                        // Roll closing stock into new opening stock for each item
                         const updatePromises = Object.values(inventoryMap).map(item => {
                             return new Promise((resolve) => {
                                 const opening    = parseFloat(item.opening_stock)    || 0;
@@ -669,7 +717,6 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
                         });
 
                         Promise.all(updatePromises).then(() => {
-                            // Save the reset timestamp so inventory knows where the new week starts
                             db.query(
                                 "UPDATE inventory_settings SET last_reset_date = ? WHERE id = 1",
                                 [resetTime],
@@ -700,12 +747,10 @@ app.get('/api/inventory/audit-report', (req, res) => {
             if (salesErr) return res.status(500).json(salesErr);
 
             const portionsMap = buildPortionsMap(salesRows);
-
             const portionsMapLower = {};
-Object.keys(portionsMap).forEach(k => {
-    portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
-});
-
+            Object.keys(portionsMap).forEach(k => {
+                portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
+            });
 
             db.query(
                 `SELECT i.item_name, i.unit_measure, i.opening_stock, i.added_stock,
@@ -917,7 +962,7 @@ app.get('/api/reports/customer-orders/:id', (req, res) => {
     );
 });
 
-// ── TEMPORARY DEBUG — remove after fixing ──
+// ── DEBUG ──────────────────────────────────────────────────────────────────────
 app.get('/api/debug/yield-check', (req, res) => {
     db.query(
         `SELECT DISTINCT si.product_name,
@@ -929,12 +974,9 @@ app.get('/api/debug/yield-check', (req, res) => {
          ORDER BY si.product_name`,
         (err, results) => {
             if (err) return res.status(500).json(err);
-            const broken = results.filter(r => !r.menu_item_name);
+            const broken  = results.filter(r => !r.menu_item_name);
             const working = results.filter(r => r.menu_item_name);
-            res.json({
-                broken_no_rule_found: broken.map(r => r.product_name),
-                working_matched: working
-            });
+            res.json({ broken_no_rule_found: broken.map(r => r.product_name), working_matched: working });
         }
     );
 });
