@@ -33,6 +33,12 @@ const plainEnglish = (item, pct) => {
     + ` Sales consumed ${f2(used)} ${unit}, leaving ${f2(closing)} ${unit} (${pct.toFixed(1)}% remaining). ${verdict}`;
 };
 
+const fmtDate = (ts) => {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  return d.toLocaleString("en-KE", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+
 // ── UI primitives ─────────────────────────────────────────────────────────────
 const Pill = ({ label, pill, pillText }) => (
   <span style={{ background: pill, color: pillText, fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 99 }}>{label}</span>
@@ -105,11 +111,13 @@ const ModalFooter = ({ onClose, onSave, saveLabel, busy, saveColor = "primary" }
   </div>
 );
 
-// ── Restock modal ─────────────────────────────────────────────────────────────
+// ── Restock modal (now accepts optional note) ─────────────────────────────────
 function RestockModal({ item, onClose, onDone }) {
   const [qty, setQty]   = useState("");
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr]   = useState("");
+  const addedBy = localStorage.getItem("username") || "";
 
   const save = async () => {
     const amount = parseFloat(qty);
@@ -118,7 +126,7 @@ function RestockModal({ item, onClose, onDone }) {
     try {
       const r = await fetch(`${API}/api/inventory/add-stock`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ item_id: item.id, quantity_to_add: amount }),
+        body: JSON.stringify({ item_id: item.id, quantity_to_add: amount, note: note.trim() || null, added_by: addedBy || null }),
       });
       const d = await r.json();
       if (d.success) { onDone(); onClose(); } else setErr("Server error.");
@@ -132,6 +140,7 @@ function RestockModal({ item, onClose, onDone }) {
         Current balance: <strong style={{ color: "#111827" }}>{f2(item.stock_quantity)} {item.unit_measure}</strong>
       </p>
       <Field label={`Quantity to add (${item.unit_measure})`} value={qty} onChange={v => { setQty(v); setErr(""); }} type="number" />
+      <Field label="Note (optional — e.g. 'Morning delivery')" value={note} onChange={setNote} />
       <ErrMsg msg={err} />
       <ModalFooter onClose={onClose} onSave={save} saveLabel="Confirm restock" busy={busy} />
     </Modal>
@@ -236,6 +245,66 @@ function AuditModal({ onClose }) {
   );
 }
 
+// ── Restock History panel (inline, shown inside the card when expanded) ───────
+function RestockHistory({ itemId, unit }) {
+  const [history, setHistory]   = useState([]);
+  const [loading, setLoading]   = useState(true);
+
+  useEffect(() => {
+    fetch(`${API}/api/inventory/${itemId}/restock-history`)
+      .then(r => r.json())
+      .then(d => { setHistory(Array.isArray(d) ? d : []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [itemId]);
+
+  if (loading) return (
+    <p style={{ margin: "10px 0 0", fontSize: 12, color: "#9CA3AF" }}>Loading restock history…</p>
+  );
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".07em", color: "#6B7280", marginBottom: 8 }}>
+        📦 Restock History
+      </div>
+
+      {history.length === 0 ? (
+        <p style={{ fontSize: 13, color: "#9CA3AF", margin: 0 }}>No restock events recorded yet.</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {history.map((h, i) => (
+            <div key={h.id || i} style={{
+              display: "flex", alignItems: "flex-start", gap: 12,
+              background: "#F0FDF4", border: "1px solid #BBF7D0",
+              borderRadius: 8, padding: "10px 14px"
+            }}>
+              {/* Colored dot timeline indicator */}
+              <div style={{
+                width: 10, height: 10, borderRadius: "50%",
+                background: "#10B981", flexShrink: 0, marginTop: 4
+              }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 4 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "#065F46" }}>
+                    +{f2(h.quantity)} {unit}
+                  </span>
+                  <span style={{ fontSize: 11, color: "#6B7280" }}>{fmtDate(h.created_at)}</span>
+                </div>
+                {(h.note || h.added_by) && (
+                  <div style={{ marginTop: 3, fontSize: 12, color: "#374151" }}>
+                    {h.note && <span>{h.note}</span>}
+                    {h.note && h.added_by && <span style={{ color: "#9CA3AF" }}> · </span>}
+                    {h.added_by && <span style={{ color: "#6B7280" }}>by {h.added_by}</span>}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN PAGE ─────────────────────────────────────────────────────────────────
 export default function InventoryPage() {
   const [items, setItems]         = useState([]);
@@ -270,7 +339,6 @@ export default function InventoryPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Enrich with computed pct + status
   const enriched = items.map(item => {
     const rp = remainPct(item);
     return { ...item, _pct: rp, _status: statusOf(rp) };
@@ -289,7 +357,7 @@ export default function InventoryPage() {
     (filter === "All" || item._status.label === filter)
   );
 
-  const toggle    = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
+  const toggle = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
 
   const runReset = async () => {
     if (!window.confirm("Roll over opening stock for all items? This cannot be undone.")) return;
@@ -403,12 +471,18 @@ export default function InventoryPage() {
                   <Cell label="% remaining"   value={`${item._pct.toFixed(1)}%`} bold />
                 </div>
 
-                {/* Plain English */}
+                {/* Expanded: plain English + restock history */}
                 {exp && (
-                  <div style={{ marginTop: 14, background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 8, padding: "13px 16px", fontSize: 13, lineHeight: 1.8, color: "#14532D" }}>
-                    <strong style={{ display: "block", fontSize: 11, textTransform: "uppercase", letterSpacing: ".07em", color: "#15803D", marginBottom: 5 }}>Plain English Summary</strong>
-                    {plainEnglish(item, item._pct)}
-                  </div>
+                  <>
+                    {/* Plain English Summary */}
+                    <div style={{ marginTop: 14, background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 8, padding: "13px 16px", fontSize: 13, lineHeight: 1.8, color: "#14532D" }}>
+                      <strong style={{ display: "block", fontSize: 11, textTransform: "uppercase", letterSpacing: ".07em", color: "#15803D", marginBottom: 5 }}>Plain English Summary</strong>
+                      {plainEnglish(item, item._pct)}
+                    </div>
+
+                    {/* Restock history — individual events */}
+                    <RestockHistory itemId={item.id} unit={item.unit_measure} />
+                  </>
                 )}
               </div>
             );
