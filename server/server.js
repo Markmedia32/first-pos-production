@@ -509,182 +509,101 @@ app.get('/api/inventory', (req, res) => {
     db.query('SELECT last_reset_date FROM inventory_settings WHERE id = 1', (settErr, settRows) => {
         if (settErr) return res.status(500).json(settErr);
  
-        let lastReset = '2026-01-01 00:00:00';
+        const lastReset = (settRows.length > 0 && settRows[0].last_reset_date)
+            ? settRows[0].last_reset_date
+            : '2020-01-01 00:00:00';
  
-        if (settRows.length > 0 && settRows[0].last_reset_date) {
-            const candidateDate = new Date(settRows[0].last_reset_date);
-            const now = new Date();
- 
-            // GUARD: if last_reset_date is in the future, use a safe fallback.
-            // This was the likely cause of all zeros — a reset accidentally wrote
-            // a future timestamp.
-            if (candidateDate > now) {
-                console.warn(`⚠️  inventory_settings.last_reset_date is in the FUTURE: ${settRows[0].last_reset_date}. Falling back to 2026-01-01.`);
-                lastReset = '2026-01-01 00:00:00';
-            } else {
-                lastReset = settRows[0].last_reset_date;
-            }
-        }
- 
-        console.log(`[Inventory] Counting sales since: ${lastReset}`);
- 
+        // Step 1: Pull all sales items since last reset (non-pending)
         const salesSql = `
-            SELECT si.product_name, SUM(si.qty) as total_qty
+            SELECT si.product_name, SUM(si.qty) AS total_qty
             FROM sales_items si
             JOIN sales s ON si.sale_id = s.id
             WHERE s.payment_status != 'Pending'
-            AND s.sale_date >= ?
+              AND s.sale_date >= ?
             GROUP BY si.product_name
         `;
  
         db.query(salesSql, [lastReset], (salesErr, salesRows) => {
             if (salesErr) return res.status(500).json(salesErr);
  
-            console.log(`[Inventory] Sales rows found: ${salesRows.length}`);
- 
+            // Step 2: Expand combos — produces portions keyed by the COMPONENT name
+            // e.g. "Chapati Beans" x3 → { Chapati: 6, Beans: 3 }
+            // e.g. "Rice Pilau" x5  → { "Rice Pilau": 5 }  (normal item, unchanged)
             const portionsMap = buildPortionsMap(salesRows);
+ 
+            // portionsMap keys are now the names that yield_rules.menu_item_name should match
+            // Build a lowercase version for case-insensitive lookup
             const portionsMapLower = {};
             Object.keys(portionsMap).forEach(k => {
                 portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
             });
  
-            console.log(`[Inventory] portionsMapLower keys:`, Object.keys(portionsMapLower));
+            // Step 3: Pull inventory + all yield rules joined
+            const invSql = `
+                SELECT
+                    i.id,
+                    i.item_name,
+                    i.unit_measure,
+                    i.opening_stock,
+                    i.added_stock,
+                    y.menu_item_name,
+                    y.yield_per_unit
+                FROM inventory i
+                LEFT JOIN yield_rules y ON LOWER(TRIM(i.item_name)) = LOWER(TRIM(y.material_name))
+                ORDER BY i.id
+            `;
  
-            db.query(
-                `SELECT i.id, i.item_name, i.unit_measure, i.opening_stock, i.added_stock,
-                        y.menu_item_name, y.yield_per_unit
-                 FROM inventory i
-                 LEFT JOIN yield_rules y ON i.item_name = y.material_name`,
-                (invErr, invRows) => {
-                    if (invErr) return res.status(500).json(invErr);
+            db.query(invSql, (invErr, invRows) => {
+                if (invErr) return res.status(500).json(invErr);
  
-                    const inventoryMap = {};
-                    invRows.forEach(row => {
-                        const key = row.id;
-                        if (!inventoryMap[key]) {
-                            inventoryMap[key] = {
-                                id:               row.id,
-                                item_name:        row.item_name,
-                                unit_measure:     row.unit_measure,
-                                opening_stock:    row.opening_stock,
-                                added_stock:      row.added_stock,
-                                total_units_used: 0
-                            };
-                        }
-                        if (row.menu_item_name && row.yield_per_unit > 0) {
-                            const ruleKey = row.menu_item_name.toLowerCase().trim();
-                            const portionsSold = portionsMapLower[ruleKey] || 0;
-                            inventoryMap[key].total_units_used += portionsSold / row.yield_per_unit;
-                        }
-                    });
+                // Step 4: Group by inventory item, summing usage across all matching yield rules
+                const inventoryMap = {};
  
-                    const result = Object.values(inventoryMap).map(item => {
-                        const opening   = parseFloat(item.opening_stock)    || 0;
-                        const added     = parseFloat(item.added_stock)      || 0;
-                        const unitsUsed = parseFloat(item.total_units_used) || 0;
-                        const closing   = opening + added - unitsUsed;
-                        return {
-                            ...item,
-                            stock_quantity: parseFloat(closing.toFixed(2)),
-                            units_sold:     parseFloat(unitsUsed.toFixed(2))
+                invRows.forEach(row => {
+                    const key = row.id;
+                    if (!inventoryMap[key]) {
+                        inventoryMap[key] = {
+                            id:               row.id,
+                            item_name:        row.item_name,
+                            unit_measure:     row.unit_measure,
+                            opening_stock:    row.opening_stock,
+                            added_stock:      row.added_stock,
+                            total_units_used: 0,
                         };
-                    });
+                    }
  
-                    res.json(result);
-                }
-            );
+                    if (row.menu_item_name && row.yield_per_unit > 0) {
+                        // Look up how many portions of this menu item were sold
+                        const menuKey     = row.menu_item_name.toLowerCase().trim();
+                        const portionsSold = portionsMapLower[menuKey] || 0;
+ 
+                        if (portionsSold > 0) {
+                            // yield_per_unit = portions per 1 unit of raw material
+                            // e.g. Rice yields 8 portions/kg → 16 portions sold = 2 kg used
+                            inventoryMap[key].total_units_used += portionsSold / parseFloat(row.yield_per_unit);
+                        }
+                    }
+                });
+ 
+                // Step 5: Compute closing stock and return
+                const result = Object.values(inventoryMap).map(item => {
+                    const opening   = parseFloat(item.opening_stock)    || 0;
+                    const added     = parseFloat(item.added_stock)      || 0;
+                    const unitsUsed = parseFloat(item.total_units_used) || 0;
+                    const closing   = opening + added - unitsUsed;
+ 
+                    return {
+                        ...item,
+                        stock_quantity: parseFloat(Math.max(0, closing).toFixed(2)),
+                        units_sold:     parseFloat(unitsUsed.toFixed(2)),
+                    };
+                });
+ 
+                res.json(result);
+            });
         });
     });
 });
- 
- 
-// ─────────────────────────────────────────────────────────────────────────────
-// DIAGNOSTIC ENDPOINT — hit this in your browser to see exactly what's broken
-// GET /api/inventory/debug-check
-// ─────────────────────────────────────────────────────────────────────────────
- 
-app.get('/api/inventory/debug-check', (req, res) => {
-    const report = {};
- 
-    // Step 1: Check inventory_settings
-    db.query('SELECT * FROM inventory_settings', (e1, r1) => {
-        report.inventory_settings = r1 || [];
- 
-        const lastReset = r1?.[0]?.last_reset_date || '2026-01-01 00:00:00';
-        const now = new Date();
-        const resetDate = new Date(lastReset);
-        report.last_reset_date = lastReset;
-        report.last_reset_is_future = resetDate > now;
-        report.current_server_time = now.toISOString();
- 
-        // Step 2: Count sales after that date
-        db.query(
-            `SELECT COUNT(*) as sale_count, MIN(s.sale_date) as earliest, MAX(s.sale_date) as latest
-             FROM sales s
-             WHERE s.payment_status != 'Pending' AND s.sale_date >= ?`,
-            [lastReset],
-            (e2, r2) => {
-                report.sales_since_reset = r2?.[0] || {};
- 
-                // Step 3: All distinct product names in sales_items (recent)
-                db.query(
-                    `SELECT DISTINCT si.product_name
-                     FROM sales_items si
-                     JOIN sales s ON si.sale_id = s.id
-                     WHERE s.payment_status != 'Pending' AND s.sale_date >= ?
-                     ORDER BY si.product_name`,
-                    [lastReset],
-                    (e3, r3) => {
-                        report.product_names_in_sales = (r3 || []).map(r => r.product_name);
- 
-                        // Step 4: yield_rules — show what's mapped and what's not
-                        db.query(
-                            `SELECT DISTINCT si.product_name,
-                                    yr.menu_item_name AS yr_menu_item,
-                                    yr.material_name  AS yr_material,
-                                    yr.yield_per_unit
-                             FROM sales_items si
-                             JOIN sales s ON si.sale_id = s.id
-                             LEFT JOIN yield_rules yr
-                               ON LOWER(TRIM(si.product_name)) = LOWER(TRIM(yr.menu_item_name))
-                             WHERE s.payment_status != 'Pending' AND s.sale_date >= ?
-                             ORDER BY si.product_name`,
-                            [lastReset],
-                            (e4, r4) => {
-                                report.yield_rule_matches   = (r4 || []).filter(r => r.yr_menu_item);
-                                report.yield_rule_no_match  = (r4 || []).filter(r => !r.yr_menu_item).map(r => r.product_name);
- 
-                                // Step 5: inventory JOIN yield_rules — check for broken joins
-                                db.query(
-                                    `SELECT i.item_name, i.unit_measure, i.opening_stock, i.added_stock,
-                                            y.menu_item_name, y.yield_per_unit
-                                     FROM inventory i
-                                     LEFT JOIN yield_rules y ON i.item_name = y.material_name
-                                     ORDER BY i.item_name`,
-                                    (e5, r5) => {
-                                        report.inventory_yield_join = (r5 || []).map(r => ({
-                                            item:           r.item_name,
-                                            opening:        r.opening_stock,
-                                            added:          r.added_stock,
-                                            rule_menu_item: r.menu_item_name || '⚠️ NO RULE',
-                                            yield_per_unit: r.yield_per_unit || null,
-                                        }));
-                                        report.inventory_items_without_rules = report.inventory_yield_join
-                                            .filter(r => r.rule_menu_item === '⚠️ NO RULE')
-                                            .map(r => r.item);
- 
-                                        res.json(report);
-                                    }
-                                );
-                            }
-                        );
-                    }
-                );
-            }
-        );
-    });
-});
-
 
 app.put('/api/inventory/update-item', (req, res) => {
     if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -766,50 +685,62 @@ app.post('/api/inventory/add-new', (req, res) => {
 
 app.post('/api/inventory/weekly-reset', (req, res) => {
     if (req.headers['user-role'] !== 'Admin') return res.status(403).json({ message: "Unauthorized" });
-
-    const now = new Date();
+ 
+    const now       = new Date();
     const resetTime = now.toISOString().slice(0, 19).replace('T', ' ');
-
+ 
     db.query('SELECT last_reset_date FROM inventory_settings WHERE id = 1', (settErr, settRows) => {
         if (settErr) return res.status(500).json(settErr);
-
-        const lastReset = settRows.length > 0
+ 
+        const lastReset = (settRows.length > 0 && settRows[0].last_reset_date)
             ? settRows[0].last_reset_date
-            : '2026-01-01 00:00:00';
-
+            : '2020-01-01 00:00:00';
+ 
         db.query(
-            `SELECT si.product_name, SUM(si.qty) as total_qty
-             FROM sales_items si JOIN sales s ON si.sale_id = s.id
-             WHERE s.payment_status != 'Pending' AND s.sale_date >= ?
+            `SELECT si.product_name, SUM(si.qty) AS total_qty
+             FROM sales_items si
+             JOIN sales s ON si.sale_id = s.id
+             WHERE s.payment_status != 'Pending'
+               AND s.sale_date >= ?
              GROUP BY si.product_name`,
             [lastReset],
             (salesErr, salesRows) => {
                 if (salesErr) return res.status(500).json(salesErr);
-
-                const portionsMap = buildPortionsMap(salesRows);
+ 
+                const portionsMap      = buildPortionsMap(salesRows);
                 const portionsMapLower = {};
                 Object.keys(portionsMap).forEach(k => {
                     portionsMapLower[k.toLowerCase().trim()] = portionsMap[k];
                 });
-
+ 
                 db.query(
-                    `SELECT i.id, i.opening_stock, i.added_stock, y.menu_item_name, y.yield_per_unit
+                    `SELECT i.id, i.opening_stock, i.added_stock,
+                            y.menu_item_name, y.yield_per_unit
                      FROM inventory i
-                     LEFT JOIN yield_rules y ON i.item_name = y.material_name`,
+                     LEFT JOIN yield_rules y ON LOWER(TRIM(i.item_name)) = LOWER(TRIM(y.material_name))`,
                     (invErr, invRows) => {
                         if (invErr) return res.status(500).json(invErr);
-
+ 
                         const inventoryMap = {};
                         invRows.forEach(row => {
                             const key = row.id;
                             if (!inventoryMap[key]) {
-                                inventoryMap[key] = { id: row.id, opening_stock: row.opening_stock, added_stock: row.added_stock, total_units_used: 0 };
+                                inventoryMap[key] = {
+                                    id:              row.id,
+                                    opening_stock:   row.opening_stock,
+                                    added_stock:     row.added_stock,
+                                    total_units_used: 0,
+                                };
                             }
                             if (row.menu_item_name && row.yield_per_unit > 0) {
-                                inventoryMap[key].total_units_used += (portionsMapLower[row.menu_item_name.toLowerCase().trim()] || 0) / row.yield_per_unit;
+                                const menuKey      = row.menu_item_name.toLowerCase().trim();
+                                const portionsSold = portionsMapLower[menuKey] || 0;
+                                if (portionsSold > 0) {
+                                    inventoryMap[key].total_units_used += portionsSold / parseFloat(row.yield_per_unit);
+                                }
                             }
                         });
-
+ 
                         const updatePromises = Object.values(inventoryMap).map(item => {
                             return new Promise((resolve) => {
                                 const opening    = parseFloat(item.opening_stock)    || 0;
@@ -823,7 +754,7 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
                                 );
                             });
                         });
-
+ 
                         Promise.all(updatePromises).then(() => {
                             db.query(
                                 "UPDATE inventory_settings SET last_reset_date = ? WHERE id = 1",
@@ -1088,6 +1019,49 @@ app.get('/api/debug/yield-check', (req, res) => {
         }
     );
 });
+
+app.get('/api/debug/inventory-check', (req, res) => {
+    db.query('SELECT last_reset_date FROM inventory_settings WHERE id = 1', (settErr, settRows) => {
+        const lastReset = (settRows && settRows[0]) ? settRows[0].last_reset_date : '2020-01-01';
+ 
+        db.query(
+            `SELECT si.product_name, SUM(si.qty) AS total_qty
+             FROM sales_items si
+             JOIN sales s ON si.sale_id = s.id
+             WHERE s.payment_status != 'Pending'
+               AND s.sale_date >= ?
+             GROUP BY si.product_name
+             ORDER BY total_qty DESC`,
+            [lastReset],
+            (err, salesRows) => {
+                if (err) return res.status(500).json(err);
+ 
+                const portionsMap = buildPortionsMap(salesRows);
+ 
+                db.query('SELECT DISTINCT menu_item_name FROM yield_rules', (err2, ruleRows) => {
+                    if (err2) return res.status(500).json(err2);
+ 
+                    const ruleNames  = ruleRows.map(r => r.menu_item_name.toLowerCase().trim());
+                    const portionKeys = Object.keys(portionsMap).map(k => k.toLowerCase().trim());
+ 
+                    const matched   = portionKeys.filter(k => ruleNames.includes(k));
+                    const unmatched = portionKeys.filter(k => !ruleNames.includes(k));
+ 
+                    res.json({
+                        last_reset:           lastReset,
+                        raw_sales_items:      salesRows,
+                        expanded_portions:    portionsMap,
+                        yield_rule_names:     ruleRows.map(r => r.menu_item_name),
+                        matched_to_rules:     matched,
+                        NOT_matched_to_rules: unmatched,
+                        note: "Items in NOT_matched means zero inventory deduction for those menu items — add yield_rules rows for them or fix the name spelling",
+                    });
+                });
+            }
+        );
+    });
+});
+ 
 
 app.get('/', (req, res) => { res.send("POS API running..."); });
 
