@@ -501,6 +501,48 @@ app.put('/api/receipts/:id/edit', (req, res) => {
     });
 });
 
+app.put('/api/receipts/:id/update-payment', (req, res) => {
+    if (req.headers['user-role'] !== 'Admin') {
+        return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+ 
+    const saleId = req.params.id;
+    const { payment_method, payment_status, customer_id, old_payment_method, amount } = req.body;
+ 
+    if (!payment_method) {
+        return res.status(400).json({ success: false, message: "Payment method is required" });
+    }
+ 
+    // Determine payment_status automatically if not provided
+    const finalStatus = payment_status || (payment_method === 'Credit' ? 'Unpaid' : 'Completed');
+ 
+    db.query(
+        `UPDATE sales SET payment_method = ?, payment_status = ? WHERE id = ?`,
+        [payment_method, finalStatus, saleId],
+        (err) => {
+            if (err) return res.status(500).json({ success: false, error: err.message });
+ 
+            // If changing TO credit, increase customer credit balance
+            if (payment_method === 'Credit' && old_payment_method !== 'Credit' && customer_id && amount) {
+                db.query(
+                    "UPDATE customers SET credit_balance = credit_balance + ? WHERE customer_id = ?",
+                    [amount, customer_id]
+                );
+            }
+ 
+            // If changing FROM credit to something else, clear the credit balance entry
+            if (old_payment_method === 'Credit' && payment_method !== 'Credit' && customer_id && amount) {
+                db.query(
+                    "UPDATE customers SET credit_balance = GREATEST(0, credit_balance - ?) WHERE customer_id = ?",
+                    [amount, customer_id]
+                );
+            }
+ 
+            res.json({ success: true, message: `Payment updated to ${payment_method}` });
+        }
+    );
+});
+
 // ─────────────────────────────────────────
 // INVENTORY
 // ─────────────────────────────────────────

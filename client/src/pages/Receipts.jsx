@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { Printer, X, Search, Eye, Pencil, Trash2, Plus } from "lucide-react";
+import { Printer, X, Search, Eye, Pencil, Trash2, Plus, CreditCard, CheckCircle } from "lucide-react";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL;
+
+const PAYMENT_METHODS = ["Cash", "MPesa", "Credit", "Advance", "Complimentary", "CreditCard"];
+const PAYMENT_STATUSES = ["Completed", "Unpaid", "Pending"];
 
 const Receipts = () => {
   const [receipts, setReceipts] = useState([]);
@@ -16,12 +19,15 @@ const Receipts = () => {
   const [modalLoading, setModalLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [menuItems, setMenuItems] = useState([]);
-
-  // FIX 1: Use state for isAdmin so it re-renders when localStorage changes
   const [isAdmin, setIsAdmin] = useState(false);
 
+  // Payment edit state
+  const [editPaymentMode, setEditPaymentMode] = useState(false);
+  const [newPaymentMethod, setNewPaymentMethod] = useState("");
+  const [newPaymentStatus, setNewPaymentStatus] = useState("");
+  const [savingPayment, setSavingPayment] = useState(false);
+
   useEffect(() => {
-    // FIX 2: Read the role inside useEffect so it always catches the current value
     const role = localStorage.getItem("userRole") || "";
     console.log("=== RECEIPTS DEBUG ===");
     console.log("userRole from localStorage:", JSON.stringify(role));
@@ -51,6 +57,7 @@ const Receipts = () => {
   const viewReceipt = async (id) => {
     setModalLoading(true);
     setEditMode(false);
+    setEditPaymentMode(false);
     setSelectedReceipt({ sale: null, items: [] });
     try {
       const res = await axios.get(`${API_BASE_URL}/api/receipts/${id}`);
@@ -59,6 +66,8 @@ const Receipts = () => {
         items: res.data.items || [],
       });
       setEditItems(res.data.items?.map((i) => ({ ...i })) || []);
+      setNewPaymentMethod(res.data.sale?.payment_method || "");
+      setNewPaymentStatus(res.data.sale?.payment_status || "Completed");
     } catch (err) {
       alert("Failed to load receipt");
       setSelectedReceipt(null);
@@ -69,9 +78,41 @@ const Receipts = () => {
   const closeModal = () => {
     setSelectedReceipt(null);
     setEditMode(false);
+    setEditPaymentMode(false);
     setEditItems([]);
   };
 
+  // ── Save Payment Method Change ──────────────────────────────
+  const savePaymentEdit = async () => {
+    if (!newPaymentMethod) return alert("Please select a payment method.");
+    setSavingPayment(true);
+    try {
+      const res = await axios.put(
+        `${API_BASE_URL}/api/receipts/${selectedReceipt.sale.id}/update-payment`,
+        {
+          payment_method: newPaymentMethod,
+          payment_status: newPaymentStatus,
+          customer_id: selectedReceipt.sale.customer_id || null,
+          old_payment_method: selectedReceipt.sale.payment_method,
+          amount: selectedReceipt.sale.total_price,
+        },
+        { headers: { "user-role": localStorage.getItem("userRole") || "" } }
+      );
+      if (res.data.success) {
+        await viewReceipt(selectedReceipt.sale.id);
+        setEditPaymentMode(false);
+        fetchReceipts();
+        alert(`✅ Payment method updated to ${newPaymentMethod}`);
+      } else {
+        alert(res.data.message || "Failed to update payment.");
+      }
+    } catch (err) {
+      alert("Network error updating payment.");
+    }
+    setSavingPayment(false);
+  };
+
+  // ── Items Edit ──────────────────────────────────────────────
   const updateItem = (index, field, value) => {
     setEditItems((prev) => {
       const updated = [...prev];
@@ -172,7 +213,7 @@ const Receipts = () => {
     <div className="receipts-container">
       <h2 className="receipts-title">Receipts</h2>
 
-      {/* FIX 3: Temporary debug badge — remove after confirming it works */}
+      {/* Debug badge */}
       <div
         style={{
           marginBottom: 12,
@@ -356,10 +397,12 @@ const Receipts = () => {
               <h3 style={{ margin: 0, fontWeight: 700, fontSize: 16 }}>
                 {editMode
                   ? `✏️ Editing Sale #${selectedReceipt?.sale?.id}`
+                  : editPaymentMode
+                  ? `💳 Edit Payment — Sale #${selectedReceipt?.sale?.id}`
                   : `Receipt #${selectedReceipt?.sale?.id || "..."}`}
               </h3>
               <div style={{ display: "flex", gap: 8 }}>
-                {!editMode && (
+                {!editMode && !editPaymentMode && (
                   <button
                     onClick={printReceipt}
                     style={{
@@ -380,8 +423,30 @@ const Receipts = () => {
                   </button>
                 )}
 
-                {/* FIX 4: isAdmin is now reactive state — this will correctly show/hide */}
-                {isAdmin && !editMode && (
+                {/* Edit Payment button — Admin only */}
+                {isAdmin && !editMode && !editPaymentMode && (
+                  <button
+                    onClick={() => setEditPaymentMode(true)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      background: "#0ea5e9",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 6,
+                      padding: "7px 14px",
+                      cursor: "pointer",
+                      fontSize: 13,
+                      fontWeight: 600,
+                    }}
+                  >
+                    <CreditCard size={15} /> Edit Payment
+                  </button>
+                )}
+
+                {/* Edit Items button — Admin only */}
+                {isAdmin && !editMode && !editPaymentMode && (
                   <button
                     onClick={() => setEditMode(true)}
                     style={{
@@ -426,8 +491,157 @@ const Receipts = () => {
               >
                 Loading receipt...
               </div>
+
+            ) : editPaymentMode ? (
+              /* ── EDIT PAYMENT MODE ── */
+              <div style={{ padding: 24 }}>
+                <div
+                  style={{
+                    background: "#fff7ed",
+                    border: "1px solid #fed7aa",
+                    borderRadius: 8,
+                    padding: "12px 16px",
+                    marginBottom: 20,
+                    fontSize: 13,
+                    color: "#9a3412",
+                  }}
+                >
+                  ⚠️ Editing payment for <strong>Sale #{selectedReceipt?.sale?.id}</strong> — {selectedReceipt?.sale?.client_name}
+                  <br />
+                  Current: <strong>{selectedReceipt?.sale?.payment_method}</strong> / <strong>{selectedReceipt?.sale?.payment_status}</strong>
+                </div>
+
+                <div style={{ marginBottom: 16 }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      color: "#374151",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Payment Method
+                  </label>
+                  <select
+                    value={newPaymentMethod}
+                    onChange={(e) => {
+                      setNewPaymentMethod(e.target.value);
+                      // Auto-set status based on method
+                      setNewPaymentStatus(
+                        e.target.value === "Credit" ? "Unpaid" : "Completed"
+                      );
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "2px solid #e5e7eb",
+                      fontSize: 14,
+                      outline: "none",
+                      fontWeight: 600,
+                      color: "#111",
+                    }}
+                  >
+                    <option value="">— Select method —</option>
+                    {PAYMENT_METHODS.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: 20 }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      color: "#374151",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Payment Status
+                  </label>
+                  <select
+                    value={newPaymentStatus}
+                    onChange={(e) => setNewPaymentStatus(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "2px solid #e5e7eb",
+                      fontSize: 14,
+                      outline: "none",
+                      fontWeight: 600,
+                      color: "#111",
+                    }}
+                  >
+                    {PAYMENT_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Preview */}
+                {newPaymentMethod && (
+                  <div
+                    style={{
+                      marginBottom: 20,
+                      padding: "10px 14px",
+                      background: "#f0fdf4",
+                      border: "1px solid #bbf7d0",
+                      borderRadius: 8,
+                      fontSize: 13,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <CheckCircle size={15} color="#16a34a" />
+                    Will save as: <strong>{newPaymentMethod}</strong> / <strong>{newPaymentStatus}</strong>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                  <button
+                    onClick={() => setEditPaymentMode(false)}
+                    style={{
+                      padding: "9px 18px",
+                      borderRadius: 8,
+                      border: "1px solid #d1d5db",
+                      background: "#fff",
+                      color: "#374151",
+                      cursor: "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={savePaymentEdit}
+                    disabled={savingPayment || !newPaymentMethod}
+                    style={{
+                      padding: "9px 20px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: savingPayment || !newPaymentMethod ? "#9ca3af" : "#0ea5e9",
+                      color: "white",
+                      cursor: savingPayment || !newPaymentMethod ? "not-allowed" : "pointer",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <CreditCard size={15} />
+                    {savingPayment ? "Saving…" : "Save Payment"}
+                  </button>
+                </div>
+              </div>
+
             ) : editMode ? (
-              /* ── EDIT MODE ── */
+              /* ── EDIT ITEMS MODE ── */
               <div style={{ padding: 20 }}>
                 <p
                   style={{ margin: "0 0 16px", fontSize: 13, color: "#6b7280" }}
@@ -453,57 +667,21 @@ const Receipts = () => {
                   >
                     <thead>
                       <tr style={{ background: "#f9fafb" }}>
-                        <th
-                          style={{
-                            padding: "10px 12px",
-                            textAlign: "left",
-                            borderBottom: "1px solid #e5e7eb",
-                            fontWeight: 600,
-                            color: "#374151",
-                          }}
-                        >
+                        <th style={{ padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #e5e7eb", fontWeight: 600, color: "#374151" }}>
                           Product
                         </th>
-                        <th
-                          style={{
-                            padding: "10px 8px",
-                            textAlign: "center",
-                            borderBottom: "1px solid #e5e7eb",
-                            fontWeight: 600,
-                            color: "#374151",
-                            width: 60,
-                          }}
-                        >
+                        <th style={{ padding: "10px 8px", textAlign: "center", borderBottom: "1px solid #e5e7eb", fontWeight: 600, color: "#374151", width: 60 }}>
                           Qty
                         </th>
-                        <th
-                          style={{
-                            padding: "10px 8px",
-                            textAlign: "right",
-                            borderBottom: "1px solid #e5e7eb",
-                            fontWeight: 600,
-                            color: "#374151",
-                            width: 80,
-                          }}
-                        >
+                        <th style={{ padding: "10px 8px", textAlign: "right", borderBottom: "1px solid #e5e7eb", fontWeight: 600, color: "#374151", width: 80 }}>
                           Price
                         </th>
-                        <th
-                          style={{
-                            padding: "10px 8px",
-                            textAlign: "center",
-                            borderBottom: "1px solid #e5e7eb",
-                            width: 40,
-                          }}
-                        ></th>
+                        <th style={{ padding: "10px 8px", textAlign: "center", borderBottom: "1px solid #e5e7eb", width: 40 }}></th>
                       </tr>
                     </thead>
                     <tbody>
                       {editItems.map((item, i) => (
-                        <tr
-                          key={i}
-                          style={{ borderBottom: "1px solid #f3f4f6" }}
-                        >
+                        <tr key={i} style={{ borderBottom: "1px solid #f3f4f6" }}>
                           <td style={{ padding: "8px 12px" }}>
                             <select
                               value={item.product_name}
@@ -537,9 +715,7 @@ const Receipts = () => {
                               type="number"
                               min="1"
                               value={item.qty}
-                              onChange={(e) =>
-                                updateItem(i, "qty", e.target.value)
-                              }
+                              onChange={(e) => updateItem(i, "qty", e.target.value)}
                               style={{
                                 width: "100%",
                                 padding: "6px",
@@ -556,9 +732,7 @@ const Receipts = () => {
                               type="number"
                               min="0"
                               value={item.price}
-                              onChange={(e) =>
-                                updateItem(i, "price", e.target.value)
-                              }
+                              onChange={(e) => updateItem(i, "price", e.target.value)}
                               style={{
                                 width: "100%",
                                 padding: "6px",
@@ -679,40 +853,21 @@ const Receipts = () => {
                   }}
                 >
                   <div style={{ textAlign: "center", marginBottom: 12 }}>
-                    <div
-                      style={{
-                        fontSize: 17,
-                        fontWeight: 700,
-                        letterSpacing: 2,
-                      }}
-                    >
+                    <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: 2 }}>
                       FIRST CLASS LOGISTICS
                     </div>
                     <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>
                       Official Receipt
                     </div>
                   </div>
-                  <div
-                    style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }}
-                  />
+                  <div style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
                   <div style={{ marginBottom: 10 }}>
                     {[
                       ["Receipt #", selectedReceipt.sale?.id],
-                      [
-                        "Customer",
-                        selectedReceipt.sale?.client_name || "Guest",
-                      ],
-                      [
-                        "Payment",
-                        selectedReceipt.sale?.payment_method || "—",
-                      ],
+                      ["Customer", selectedReceipt.sale?.client_name || "Guest"],
+                      ["Payment", selectedReceipt.sale?.payment_method || "—"],
                       ["Status", selectedReceipt.sale?.payment_status],
-                      [
-                        "Date",
-                        new Date(
-                          selectedReceipt.sale?.sale_date
-                        ).toLocaleString(),
-                      ],
+                      ["Date", new Date(selectedReceipt.sale?.sale_date).toLocaleString()],
                     ].map(([label, value]) => (
                       <div
                         key={label}
@@ -722,16 +877,12 @@ const Receipts = () => {
                           marginBottom: 4,
                         }}
                       >
-                        <span style={{ color: "#555", fontSize: 12 }}>
-                          {label}
-                        </span>
+                        <span style={{ color: "#555", fontSize: 12 }}>{label}</span>
                         <span style={{ fontWeight: 600 }}>{value}</span>
                       </div>
                     ))}
                   </div>
-                  <div
-                    style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }}
-                  />
+                  <div style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
                   <div
                     style={{
                       display: "flex",
@@ -747,13 +898,7 @@ const Receipts = () => {
                     <span style={{ textAlign: "right", flex: 1 }}>TOTAL</span>
                   </div>
                   {selectedReceipt.items?.length === 0 ? (
-                    <p
-                      style={{
-                        color: "#9ca3af",
-                        fontSize: 12,
-                        textAlign: "center",
-                      }}
-                    >
+                    <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center" }}>
                       No items found
                     </p>
                   ) : (
@@ -768,29 +913,17 @@ const Receipts = () => {
                         }}
                       >
                         <span style={{ flex: 2 }}>{item.product_name}</span>
-                        <span style={{ textAlign: "center", flex: 1 }}>
-                          {item.qty}
-                        </span>
+                        <span style={{ textAlign: "center", flex: 1 }}>{item.qty}</span>
                         <span style={{ textAlign: "right", flex: 1 }}>
                           {parseFloat(item.price).toLocaleString()}
                         </span>
-                        <span
-                          style={{
-                            textAlign: "right",
-                            flex: 1,
-                            fontWeight: 600,
-                          }}
-                        >
-                          {(
-                            parseFloat(item.price) * parseInt(item.qty)
-                          ).toLocaleString()}
+                        <span style={{ textAlign: "right", flex: 1, fontWeight: 600 }}>
+                          {(parseFloat(item.price) * parseInt(item.qty)).toLocaleString()}
                         </span>
                       </div>
                     ))
                   )}
-                  <div
-                    style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }}
-                  />
+                  <div style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
                   <div
                     style={{
                       display: "flex",
@@ -807,9 +940,7 @@ const Receipts = () => {
                       ).toLocaleString()}
                     </span>
                   </div>
-                  <div
-                    style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }}
-                  />
+                  <div style={{ borderTop: "1px dashed #ccc", margin: "10px 0" }} />
                   <div
                     style={{
                       textAlign: "center",
