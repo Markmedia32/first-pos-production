@@ -600,32 +600,34 @@ app.get('/api/inventory', (req, res) => {
  
                 // Step 4: Group by inventory item, summing usage across all matching yield rules
                 const inventoryMap = {};
- 
-                invRows.forEach(row => {
-                    const key = row.id;
-                    if (!inventoryMap[key]) {
-                        inventoryMap[key] = {
-                            id:               row.id,
-                            item_name:        row.item_name,
-                            unit_measure:     row.unit_measure,
-                            opening_stock:    row.opening_stock,
-                            added_stock:      row.added_stock,
-                            total_units_used: 0,
-                        };
-                    }
- 
-                    if (row.menu_item_name && row.yield_per_unit > 0) {
-                        // Look up how many portions of this menu item were sold
-                        const menuKey     = row.menu_item_name.toLowerCase().trim();
-                        const portionsSold = portionsMapLower[menuKey] || 0;
- 
-                        if (portionsSold > 0) {
-                            // yield_per_unit = portions per 1 unit of raw material
-                            // e.g. Rice yields 8 portions/kg → 16 portions sold = 2 kg used
-                            inventoryMap[key].total_units_used += portionsSold / parseFloat(row.yield_per_unit);
-                        }
-                    }
-                });
+
+invRows.forEach(row => {
+    const key = row.id;
+    if (!inventoryMap[key]) {
+        inventoryMap[key] = {
+            id:               row.id,
+            item_name:        row.item_name,
+            unit_measure:     row.unit_measure,
+            opening_stock:    row.opening_stock,
+            added_stock:      row.added_stock,
+            seenMenuItems:    new Set(),   // ← tracks which menu items already counted
+            total_units_used: 0,
+        };
+    }
+
+    if (row.menu_item_name && row.yield_per_unit > 0) {
+        const menuKey = row.menu_item_name.toLowerCase().trim();
+
+        // GUARD: skip if we've already processed this (material, menu_item) pair
+        if (inventoryMap[key].seenMenuItems.has(menuKey)) return;
+        inventoryMap[key].seenMenuItems.add(menuKey);
+
+        const portionsSold = portionsMapLower[menuKey] || 0;
+        if (portionsSold > 0) {
+            inventoryMap[key].total_units_used += portionsSold / parseFloat(row.yield_per_unit);
+        }
+    }
+});
  
                 // Step 5: Compute closing stock and return
                 const result = Object.values(inventoryMap).map(item => {
@@ -765,24 +767,29 @@ app.post('/api/inventory/weekly-reset', (req, res) => {
  
                         const inventoryMap = {};
                         invRows.forEach(row => {
-                            const key = row.id;
-                            if (!inventoryMap[key]) {
-                                inventoryMap[key] = {
-                                    id:              row.id,
-                                    opening_stock:   row.opening_stock,
-                                    added_stock:     row.added_stock,
-                                    total_units_used: 0,
-                                };
-                            }
-                            if (row.menu_item_name && row.yield_per_unit > 0) {
-                                const menuKey      = row.menu_item_name.toLowerCase().trim();
-                                const portionsSold = portionsMapLower[menuKey] || 0;
-                                if (portionsSold > 0) {
-                                    inventoryMap[key].total_units_used += portionsSold / parseFloat(row.yield_per_unit);
-                                }
-                            }
-                        });
- 
+    const key = row.id;
+    if (!inventoryMap[key]) {
+        inventoryMap[key] = {
+            id:              row.id,
+            opening_stock:   row.opening_stock,
+            added_stock:     row.added_stock,
+            seenMenuItems:   new Set(),   // ← add this
+            total_units_used: 0,
+        };
+    }
+    if (row.menu_item_name && row.yield_per_unit > 0) {
+        const menuKey = row.menu_item_name.toLowerCase().trim();
+
+        // GUARD: same fix here
+        if (inventoryMap[key].seenMenuItems.has(menuKey)) return;
+        inventoryMap[key].seenMenuItems.add(menuKey);
+
+        const portionsSold = portionsMapLower[menuKey] || 0;
+        if (portionsSold > 0) {
+            inventoryMap[key].total_units_used += portionsSold / parseFloat(row.yield_per_unit);
+        }
+    }
+});
                         const updatePromises = Object.values(inventoryMap).map(item => {
                             return new Promise((resolve) => {
                                 const opening    = parseFloat(item.opening_stock)    || 0;

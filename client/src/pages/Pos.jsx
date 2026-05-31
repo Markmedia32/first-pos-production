@@ -137,7 +137,7 @@ const Pos = () => {
 };
   const filteredMenu = menuItems.filter(item => 
     item.product_name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  ); 
 
   return (
     <div className="pos-layout">
