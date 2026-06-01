@@ -91,50 +91,50 @@ const Pos = () => {
     setSelectedCustomer(null);
   };
 
- const handlePayment = async (method) => {
+  const handlePayment = async (method) => {
   
-  if (cart.length === 0) return alert("Cart is empty");
+    if (cart.length === 0) return alert("Cart is empty");
 
-  // ✅ ADD IT RIGHT HERE 👇
-  if (method === "Credit" && !selectedCustomer) {
-    alert("Please select a customer for credit");
-    return;
-  }
+    if (method === "Credit" && !selectedCustomer) {
+      alert("Please select a customer for credit");
+      return;
+    }
 
-  setLoading(true);
+    setLoading(true);
 
-  const finalClientName = selectedCustomer 
-    ? selectedCustomer.full_name 
-    : (clientName || "Guest Customer");
+    const finalClientName = selectedCustomer 
+      ? selectedCustomer.full_name 
+      : (clientName || "Guest Customer");
 
-  try {
-    const payload = {
-      amount: method === 'Complimentary' ? 0 : total,
-      clientName: finalClientName,
-      items: cart,
-      paymentMethod: method, 
-      customerId: selectedCustomer?.customer_id || null,
-    };
+    try {
+      const payload = {
+        amount: method === 'Complimentary' ? 0 : total,
+        clientName: finalClientName,
+        items: cart,
+        paymentMethod: method, 
+        customerId: selectedCustomer?.customer_id || null,
+      };
 
-    await axios.post(`${API_BASE_URL}/api/pay/unified`, payload);
+      await axios.post(`${API_BASE_URL}/api/pay/unified`, payload);
 
-    setActiveOrder({ 
-      name: finalClientName, 
-      amount: method === 'Complimentary' ? 0 : total,
-      method: method,
-      items: [...cart] 
-    });
+      setActiveOrder({ 
+        name: finalClientName, 
+        amount: method === 'Complimentary' ? 0 : total,
+        method: method,
+        items: [...cart] 
+      });
 
-    setShowReceipt(true);
-    resetForm();
-    setLoading(false);
+      setShowReceipt(true);
+      resetForm();
+      setLoading(false);
 
-  } catch (err) {
-    console.error(err.response?.data); // ✅ ADD THIS TOO
-    alert(err.response?.data?.error || `${method} payment failed.`);
-    setLoading(false);
-  }
-};
+    } catch (err) {
+      console.error(err.response?.data);
+      alert(err.response?.data?.error || `${method} payment failed.`);
+      setLoading(false);
+    }
+  };
+
   const filteredMenu = menuItems.filter(item => 
     item.product_name.toLowerCase().includes(searchTerm.toLowerCase())
   ); 
@@ -223,44 +223,25 @@ const Pos = () => {
 
           <div className="action-buttons-grid">
             <button 
-  className="pay-btn mpesa" 
-  onClick={() => handlePayment('MPesa')} 
-  disabled={loading}
->
-  <Smartphone size={16}/> PAYMENT VIA M-PESA
-</button>
-            {/* Show a warning if customer has debt but still allow wallet payment */}
-{selectedCustomer && parseFloat(selectedCustomer.credit_balance) > 0 && parseFloat(selectedCustomer.wallet_balance) >= total && (
-  <div style={{ 
-    background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 8,
-    padding: '6px 12px', fontSize: 11, color: '#92400e', fontWeight: 600,
-    marginBottom: 4
-  }}>
-    ⚠️ Customer has KES {parseFloat(selectedCustomer.credit_balance).toLocaleString()} credit debt
-  </div>
-)}
-
-<button 
-  className="pay-btn advance" 
-  onClick={() => handlePayment('Advance')} 
-  disabled={
-    !selectedCustomer ||
-    loading ||
-    parseFloat(selectedCustomer.wallet_balance) < total
-  }
->
-  <Wallet size={16}/> WALLET ({selectedCustomer?.wallet_balance || 0})
-</button>
+              className="pay-btn mpesa" 
+              onClick={() => handlePayment('MPesa')} 
+              disabled={loading}
+            >
+              <Smartphone size={16}/> PAYMENT VIA M-PESA
+            </button>
+            <button className="pay-btn cash" onClick={() => handlePayment('Cash')} disabled={loading}>
+              <Banknote size={16}/> CASH
+            </button>
             
             <button 
                 className="pay-btn advance" 
                 onClick={() => handlePayment('Advance')} 
                 disabled={
-  !selectedCustomer ||
-  loading ||
-  selectedCustomer.wallet_balance < total ||
-  selectedCustomer.credit_balance > 0 // 🚫 BLOCK if debt exists
-}
+                  !selectedCustomer ||
+                  loading ||
+                  selectedCustomer.wallet_balance < total ||
+                  selectedCustomer.credit_balance > 0
+                }
             >
                 <Wallet size={16}/> WALLET ({selectedCustomer?.wallet_balance || 0})
             </button>
@@ -273,7 +254,6 @@ const Pos = () => {
                 <CreditCard size={16}/> CREDIT
             </button>
 
-            {/* --- COMPLIMENTARY BUTTON ADDED BELOW --- */}
             {(selectedCustomer?.customer_type === 'Owner' || selectedCustomer?.customer_type === 'Staff') && (
                 <button 
                   className="pay-btn comp" 
