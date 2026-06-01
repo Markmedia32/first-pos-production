@@ -229,9 +229,28 @@ const Pos = () => {
 >
   <Smartphone size={16}/> PAYMENT VIA M-PESA
 </button>
-            <button className="pay-btn cash" onClick={() => handlePayment('Cash')} disabled={loading}>
-              <Banknote size={16}/> CASH
-            </button>
+            {/* Show a warning if customer has debt but still allow wallet payment */}
+{selectedCustomer && parseFloat(selectedCustomer.credit_balance) > 0 && parseFloat(selectedCustomer.wallet_balance) >= total && (
+  <div style={{ 
+    background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 8,
+    padding: '6px 12px', fontSize: 11, color: '#92400e', fontWeight: 600,
+    marginBottom: 4
+  }}>
+    ⚠️ Customer has KES {parseFloat(selectedCustomer.credit_balance).toLocaleString()} credit debt
+  </div>
+)}
+
+<button 
+  className="pay-btn advance" 
+  onClick={() => handlePayment('Advance')} 
+  disabled={
+    !selectedCustomer ||
+    loading ||
+    parseFloat(selectedCustomer.wallet_balance) < total
+  }
+>
+  <Wallet size={16}/> WALLET ({selectedCustomer?.wallet_balance || 0})
+</button>
             
             <button 
                 className="pay-btn advance" 
