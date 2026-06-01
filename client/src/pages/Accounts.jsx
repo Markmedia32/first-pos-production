@@ -491,29 +491,60 @@ const TopUpModal = ({ customer, onClose, onSuccess }) => {
       <Field label="Or Enter Amount (KES)" type="number" placeholder="e.g. 3500" value={amount} onChange={e => setAmount(e.target.value)} />
 
       {/* Preview */}
-      {topupNum > 0 && (
-        <div style={{ background: '#f9fafb', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
-          <p style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 700, color: '#374151' }}>Payment Preview</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {debtCleared > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                <span style={{ color: '#666' }}>Debt cleared first</span>
-                <span style={{ fontWeight: 700, color: '#ef4444' }}>−{kes(debtCleared)}</span>
-              </div>
-            )}
-            {walletGain > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                <span style={{ color: '#666' }}>Added to wallet</span>
-                <span style={{ fontWeight: 700, color: '#10b981' }}>+{kes(walletGain)}</span>
-              </div>
-            )}
-            <div style={{ borderTop: '1px dashed #e5e7eb', paddingTop: 8, display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-              <span style={{ fontWeight: 700 }}>New wallet balance</span>
-              <span style={{ fontWeight: 900, color: '#0071e3' }}>{kes(wallet + walletGain)}</span>
-            </div>
-          </div>
+      // Replace the existing preview block inside TopUpModal
+{topupNum > 0 && (
+  <div style={{ background: '#f9fafb', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
+    <p style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 700, color: '#374151' }}>
+      Payment Preview
+    </p>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {debtCleared > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+          <span style={{ color: '#666' }}>Debt cleared first</span>
+          <span style={{ fontWeight: 700, color: '#ef4444' }}>−{kes(debtCleared)}</span>
         </div>
       )}
+      {walletGain > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+          <span style={{ color: '#666' }}>Added to wallet</span>
+          <span style={{ fontWeight: 700, color: '#10b981' }}>+{kes(walletGain)}</span>
+        </div>
+      )}
+      {/* ✅ Show auto-settlement warning if wallet will cover remaining debt */}
+      {walletGain === 0 && (wallet + topupNum) >= debt && debt > 0 && (
+        <div style={{ 
+          display: 'flex', justifyContent: 'space-between', fontSize: 13,
+          background: '#f0fdf4', borderRadius: 8, padding: '6px 10px'
+        }}>
+          <span style={{ color: '#166534', fontWeight: 600 }}>
+            ✓ Full debt will be cleared
+          </span>
+          <span style={{ fontWeight: 700, color: '#10b981' }}>{kes(debt)}</span>
+        </div>
+      )}
+      <div style={{ 
+        borderTop: '1px dashed #e5e7eb', paddingTop: 8, 
+        display: 'flex', justifyContent: 'space-between', fontSize: 13 
+      }}>
+        <span style={{ fontWeight: 700 }}>New wallet balance</span>
+        <span style={{ fontWeight: 900, color: '#0071e3' }}>{kes(wallet + walletGain)}</span>
+      </div>
+      {/* Show remaining debt after topup */}
+      {debtCleared < debt && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+          <span style={{ color: '#888' }}>Remaining debt</span>
+          <span style={{ fontWeight: 700, color: '#ef4444' }}>{kes(debt - debtCleared)}</span>
+        </div>
+      )}
+      {debtCleared >= debt && debt > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+          <span style={{ color: '#888' }}>Remaining debt</span>
+          <span style={{ fontWeight: 700, color: '#10b981' }}>KES 0 ✓</span>
+        </div>
+      )}
+    </div>
+  </div>
+)}
 
       <button
         onClick={handleSubmit}

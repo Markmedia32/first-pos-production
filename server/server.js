@@ -48,6 +48,41 @@ const buildPortionsMap = (salesRows) => {
     return portionsMap;
 };
 
+// Add this helper function near the top of server.js
+const autoSettleDebt = (customer_id, callback) => {
+    db.query(
+        "SELECT customer_id, full_name, credit_balance, wallet_balance FROM customers WHERE customer_id = ?",
+        [customer_id],
+        (err, results) => {
+            if (err || !results.length) return callback(err);
+            const customer = results[0];
+            const debt   = parseFloat(customer.credit_balance || 0);
+            const wallet = parseFloat(customer.wallet_balance || 0);
+
+            if (debt > 0 && wallet >= debt) {
+                // Wallet can fully cover the debt — settle it
+                const newWallet = wallet - debt;
+                db.query(
+                    "UPDATE customers SET credit_balance = 0, wallet_balance = ? WHERE customer_id = ?",
+                    [newWallet, customer_id],
+                    (err2) => {
+                        if (err2) return callback(err2);
+                        db.query(
+                            `INSERT INTO wallet_transactions 
+                             (customer_id, customer_name, type, amount, balance_after, reference) 
+                             VALUES (?, ?, 'WITHDRAWAL', ?, ?, ?)`,
+                            [customer_id, customer.full_name, debt, newWallet, 'Auto debt settlement'],
+                            (err3) => callback(err3, { settled: true, amount: debt, newWallet })
+                        );
+                    }
+                );
+            } else {
+                callback(null, { settled: false });
+            }
+        }
+    );
+};
+
 // ─────────────────────────────────────────
 // COMBO HELPERS
 // ─────────────────────────────────────────
@@ -259,25 +294,58 @@ app.post('/api/customers/create', (req, res) => {
 app.put('/api/customers/topup', (req, res) => {
     const { customer_id, amount, clientName } = req.body;
     const topupAmount = parseFloat(amount);
-    db.query("SELECT credit_balance, wallet_balance FROM customers WHERE customer_id = ?", [customer_id], (err, results) => {
-        if (err || results.length === 0) return res.status(500).json({ error: "Customer not found" });
-        const debt        = parseFloat(results[0].credit_balance || 0);
-        const wallet      = parseFloat(results[0].wallet_balance || 0);
-        const debtCleared = Math.min(debt, topupAmount);
-        const newDebt     = debt - debtCleared;
-        const newWallet   = wallet + (topupAmount - debtCleared);
-        db.query(`UPDATE customers SET credit_balance = ?, wallet_balance = ? WHERE customer_id = ?`, [newDebt, newWallet, customer_id], (err2) => {
-            if (err2) return res.status(500).json(err2);
+
+    db.query(
+        "SELECT credit_balance, wallet_balance FROM customers WHERE customer_id = ?",
+        [customer_id],
+        (err, results) => {
+            if (err || results.length === 0) 
+                return res.status(500).json({ error: "Customer not found" });
+
+            const debt        = parseFloat(results[0].credit_balance || 0);
+            const wallet      = parseFloat(results[0].wallet_balance || 0);
+            const debtCleared = Math.min(debt, topupAmount);
+            const newDebt     = debt - debtCleared;
+            const newWallet   = wallet + (topupAmount - debtCleared);
+
             db.query(
-                `INSERT INTO wallet_transactions (customer_id, customer_name, type, amount, balance_after, reference) VALUES (?, ?, 'DEPOSIT', ?, ?, ?)`,
-                [customer_id, clientName, topupAmount, newWallet, 'Wallet Topup'],
-                (err3) => {
-                    if (err3) return res.status(500).json(err3);
-                    res.json({ success: true, wallet_balance: newWallet, credit_balance: newDebt });
+                `UPDATE customers SET credit_balance = ?, wallet_balance = ? WHERE customer_id = ?`,
+                [newDebt, newWallet, customer_id],
+                (err2) => {
+                    if (err2) return res.status(500).json(err2);
+
+                    db.query(
+                        `INSERT INTO wallet_transactions 
+                         (customer_id, customer_name, type, amount, balance_after, reference) 
+                         VALUES (?, ?, 'DEPOSIT', ?, ?, ?)`,
+                        [customer_id, clientName, topupAmount, newWallet, 'Wallet Topup'],
+                        (err3) => {
+                            if (err3) return res.status(500).json(err3);
+
+                            // ✅ After topup, auto-settle if wallet now covers any remaining debt
+                            autoSettleDebt(customer_id, (settleErr, result) => {
+                                if (settleErr) console.error('Auto-settle error:', settleErr);
+                                
+                                // Re-fetch final balances to return accurate state
+                                db.query(
+                                    "SELECT credit_balance, wallet_balance FROM customers WHERE customer_id = ?",
+                                    [customer_id],
+                                    (finalErr, finalResult) => {
+                                        res.json({
+                                            success: true,
+                                            wallet_balance: finalResult?.[0]?.wallet_balance ?? newWallet,
+                                            credit_balance: finalResult?.[0]?.credit_balance ?? newDebt,
+                                            debt_settled: result?.settled || false
+                                        });
+                                    }
+                                );
+                            });
+                        }
+                    );
                 }
             );
-        });
-    });
+        }
+    );
 });
 
 app.get('/api/customers/total-credit', (req, res) => {
